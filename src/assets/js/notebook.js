@@ -162,13 +162,16 @@ function Editor({ cell }) {
     const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) mount(); }, { rootMargin: '600px 0px' });
     io.observe(host);
     window.hydrateSoon && window.hydrateSoon('ed:' + cell.id, mount);   // background fallback for off-screen cells
-    // A workbook mounts NOW rather than waiting to be scrolled into view. Lazy mounting is there to
-    // avoid building an editor for every cell of a long document; a workbook has few, and each is a
-    // cell the reader is meant to type in. Waiting costs them a visible gap, because a full
-    // re-render unmounts the editors and the callback that would rebuild this one queues behind
-    // whatever the page is doing (finishing their run), leaving the placeholder on screen until it
-    // drains. Placed after the observer exists: `mount` disconnects it.
-    if (_app.workbook) mount();
+    // A workbook mounts an ON-SCREEN exercise immediately instead of waiting for the observer to be
+    // serviced, which can queue behind whatever the page is already doing and leave the reader
+    // looking at a cell with no editor in it. Strictly the visible ones: mounting every tagged cell
+    // up front is one long synchronous build of every editor in the document, which is the cost the
+    // lazy path exists to spread out. Off-screen cells still wait for the observer.
+    if (_app.workbook) {
+      const r = host.getBoundingClientRect();
+      const margin = window.innerHeight;   // matches the observer's rootMargin in spirit, not exactly
+      if (r.bottom > -margin && r.top < window.innerHeight + margin) mount();
+    }
     return () => {
       try { io.disconnect(); } catch (_) {}
       if (window._editorMount) delete window._editorMount[cell.id];
