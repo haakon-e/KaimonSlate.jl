@@ -556,25 +556,57 @@ function _scBadge(st) {
   return st === 'running' ? '<span class="scspin"></span>'
        : st === 'errored' ? '<span class="scx">⚠</span>' : '<span class="scok">✓</span>';
 }
+// "just now" / "2m ago" / "3h ago". Relative rather than a clock time because the question a
+// scratchpad answers is "is this the run I just did, or one from before lunch?" — and a wall clock
+// makes the reader do that subtraction themselves.
+function _scAgo(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 5) return 'just now';
+  if (s < 60) return Math.floor(s) + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
 function _scCellHtml(c) {
   const st = c.state || 'fresh';
   const dur = c.duration != null ? (c.duration + ' ms') : '';
+  const ago = c.ranAt ? '<span class="scago" data-ranat="' + c.ranAt + '">' + _esc(_scAgo(c.ranAt)) + '</span>' : '';
   const rich = ((c.echarts && c.echarts.length) || (c.tables && c.tables.length))
     ? '<div class="scnote">interactive output — run it in a real cell to see the chart/table</div>' : '';
   return '<div class="sccell sc-' + _esc(st) + '">' +
-    '<div class="schdr">' + _scBadge(st) + '<span class="scdur">' + _esc(dur) + '</span></div>' +
+    '<div class="schdr">' + _scBadge(st) + '<span class="scdur">' + _esc(dur) + '</span>' + ago + '</div>' +
     '<pre class="scsrc">' + _esc(c.source) + '</pre>' +
     '<div class="scout">' + (c.output || '') + '</div>' + rich + '</div>';
 }
 function _scRender() {
   const b = document.getElementById('scratchbody'); if (!b) return;
-  const atBottom = (b.scrollHeight - b.scrollTop - b.clientHeight) < 48;   // were we pinned to newest?
-  b.innerHTML = _scratchCells.length ? _scratchCells.map(_scCellHtml).join('')
+  // NEWEST FIRST. The input sits at the top of the panel, so appending put each result furthest
+  // from the thing that produced it and made every run start with a scroll. Reversing also means a
+  // long-running history costs nothing to ignore: it grows downward, out of the way.
+  const ordered = _scratchCells.slice().reverse();
+  // The empty state has to name whoever is actually looking at it. In a workbook that's a student
+  // with an editor above this panel; telling them about agents and `slate.eval` describes a tool
+  // they don't have and a workflow they're not in.
+  const empty = (typeof SLATE_IS_WORKBOOK !== 'undefined' && SLATE_IS_WORKBOOK)
+    ? '<div class="scempty">Nothing run yet. Type Julia above and press ⇧⏎ — results appear here, and nothing you do in the scratchpad changes the document.</div>'
     : '<div class="scempty">No scratch evals yet. Agents use <code>slate.eval</code> for throwaway diagnostics — they land here, out of the document.</div>';
-  if (atBottom) b.scrollTop = b.scrollHeight;   // sticky: follow new output only if already at the bottom — don't yank a scrolled-up reader down
+  b.innerHTML = ordered.length ? ordered.map(_scCellHtml).join('') : empty;
+  b.scrollTop = 0;   // newest is at the top, and that is what a new result should show
   _scWireImages(b);
   _scUpdateChrome();
 }
+// The labels above go stale by construction: "just now" is only true for five seconds. Re-stamping
+// the spans in place (rather than re-rendering) keeps scroll position and any open lightbox intact.
+// 30s is fine — the shortest bucket a stale label can misreport by is a minute.
+setInterval(() => {
+  const p = document.getElementById('scratchpanel');
+  if (!p || !p.classList.contains('open')) return;   // nothing to keep honest while it's closed
+  p.querySelectorAll('.scago[data-ranat]').forEach(el => {
+    el.textContent = _scAgo(Number(el.dataset.ranat) || 0);
+  });
+}, 30000);
+
 // Topbar "🧪 scratch" pill + menu-item badge — the always-visible signal that a slate.eval is
 // running in the worker (it holds the eval mutex, so cell runs are paused meanwhile).
 function _scUpdateChrome() {
