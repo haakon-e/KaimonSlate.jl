@@ -2554,11 +2554,13 @@ _wsconn(cap::Int) = _WSConn(Channel{Union{String,Vector{UInt8}}}(cap), Threads.A
 # WebSocket is the one thing a test of them does not need.
 _raw_send(ws, frame) = HTTP.WebSockets.send(ws, frame)
 
-# Drain whatever is queued, in order, until the channel closes. `wait` parks until something is
-# queued WITHOUT removing it, so a frame only ever leaves the queue with the write lock held — which
-# is what makes the fast path's emptiness check in `_ws_send!` trustworthy. Taking first and locking
-# second would leave a window where the queue reads empty while a frame is still in flight, and a
-# direct send would overtake it: an audio block delivered out of order.
+# Drain whatever is queued, in order, until the channel closes: one wake clears the whole backlog, so a
+# burst costs one wakeup rather than one per frame. `wait` parks until something is queued WITHOUT
+# removing it, so a frame only leaves the queue with the write lock held.
+#
+# This is now the ONLY writer — `_ws_send!` always goes through the queue, so ordering follows from the
+# single drain task rather than from the lock. `wlock` is kept because these are concurrency invariants
+# worth being able to test against a stand-in socket (see `_raw_send`).
 function _ws_drain!(c::_WSConn)
     while true
         wait(c.out)
@@ -2985,6 +2987,7 @@ function stop_hub(h::Hub)
         try; shutdown!(nb.kernel); catch; end
         _teardown_region!(nb)
     end
+    _stop_run_supervisor!()          # its closure holds THIS hub — see `_ensure_run_supervisor!`
     h.server === nothing || close(h.server)
     return nothing
 end
