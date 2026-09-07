@@ -119,7 +119,13 @@ function Editor({ cell }) {
       const p = host.querySelector('.cm-placeholder'); if (p) p.remove();
       let primed = false;
       view = window.mkEditor(host, {
-        doc: cell.source, cellId: cell.id, markdown: cell.kind === 'md',
+        // Seed from the LIVE source too, for the same reason the comment below gives. This effect has
+        // `[]` deps, so `mount` closes over the FIRST render's `cell` and may not run until the reader
+        // scrolls to it — by which time an agent edit or a file-watcher refresh can have landed, which
+        // the Cell effect wrote to `srcMap` and the placeholder precisely BECAUSE no editor existed
+        // yet. Seeding from the closure re-opened the cell at its old text.
+        doc: (window.srcMap && window.srcMap[cell.id] != null) ? window.srcMap[cell.id] : cell.source,
+        cellId: cell.id, markdown: cell.kind === 'md',
         // Compare against the LIVE server source (srcMap), NOT the mount-time `cell.source` closure —
         // else applying an agent/external edit via edSetText (which fires this) would look like a USER
         // edit, falsely marking the cell `edited` + backing it up, which later pops phantom reconcile
@@ -388,12 +394,14 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
     if (el && collapsed !== wasCollapsed.current) { wasCollapsed.current = collapsed; _animateCollapse(el, collapsed); }
   }, [collapsed]);
 
-  // Dispose this cell's ECharts when it unmounts; charts otherwise update in place.
+  // Dispose this cell's ECharts and animation players when it unmounts; both otherwise update in place.
   useEffect(() => () => {
     const cs = window.charts[c.id];
     if (cs) { cs.forEach(i => { try { i.dispose(); } catch (_) {} }); delete window.charts[c.id]; }
     const el = ref.current;   // inline `{{ echart }}` instances live on the nodes, not in window.charts
     if (el) el.querySelectorAll('.ichart').forEach(e => { if (e._inst) { try { e._inst.dispose(); } catch (_) {} } });
+    // A player owns a WebGL texture array, so an undisposed one holds GPU memory for the page's life.
+    window.disposeAnimations && window.disposeAnimations(c.id);
     // Cancel any pending debounced snapshot (core.js _snapCell) — its closure holds a reference
     // to the now-disposed chart instances and would otherwise fire against a removed cell.
     if (window._cancelSnap) window._cancelSnap(c.id);

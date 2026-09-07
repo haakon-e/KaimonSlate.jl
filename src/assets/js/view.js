@@ -2,7 +2,7 @@
 // (the /api/bind POST target); `b` is its spec ({name,widget,params,value}). Used
 // by both the standalone @bind cell and any cell's control strip — wherever a
 // widget renders, changing it drives recompute the same way.
-const _esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const _esc = s => window.slateEscHtml(s);
 // Is this page an APP? Read from the bootstrap object the server injects into <head>, NOT from
 // `body.app` — that class is added by appmode.js on DOMContentLoaded, while a state can render
 // before then. Anything here that asks "am I an app?" before that moment would get `false` and act
@@ -821,7 +821,11 @@ function patchCells(cells) {
     }
     if (!_conflicted) { renderCharts(nc); renderTables(nc); syncControlValuesSoon(nc); }
     // Spend the stamp only now, and only if the cell was actually on the page — see `revIsNew`.
-    if (cell) { revMark(nc); markBlank(cell, nc); }
+    // Not for a CONFLICTED cell: every write above was skipped for it, so nothing was drawn, and
+    // stamping anyway records a payload as applied that never reached the DOM. The reconcile flow's
+    // "use the incoming change" re-applies through `patchCells` (restore.js), which `revIsNew` would
+    // then reject as stale — leaving the cell showing your old text with no way back.
+    if (cell && !_conflicted) { revMark(nc); markBlank(cell, nc); }
   });
   window.onCellsPatched && window.onCellsPatched(cells);       // states/durations moved (DAG panel)
   window.renderRunPill && window.renderRunPill();              // a cell just changed state → refresh the error pill
