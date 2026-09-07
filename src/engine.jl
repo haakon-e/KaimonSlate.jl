@@ -285,7 +285,10 @@ function _parse_controls(s::AbstractString)
         t = strip(t)
         isempty(t) && continue
         if startswith(t, "[") && endswith(t, "]")
-            names = String[String(strip(n)) for n in split(t[2:end-1], ',') if !isempty(strip(n))]
+            # `chop`, not `t[2:end-1]`: byte indexing lands mid-character when the group's last
+            # name ends in a non-ASCII character, so a bind named `sb_ρ` threw StringIndexError.
+            inner = chop(t; head = 1, tail = 1)
+            names = String[String(strip(n)) for n in split(inner, ',') if !isempty(strip(n))]
             isempty(names) || push!(cols, names)
         else
             push!(cols, String[t])

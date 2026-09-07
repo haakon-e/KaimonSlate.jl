@@ -390,7 +390,9 @@ end
 # bare `@key` (prose) — the latter only for defined keys, so emails/handles are left literal.
 function _rewrite_text_citations(text, citekeys, emit; figrefs = Dict{String,Tuple{Int,String}}(), figemit = _fig_text)
     t = replace(text, r"\[([^\]\n]*@[^\]\n]*)\]" => m -> begin
-        r = _rewrite_bracket_cite(m[2:end-1], emit; figrefs = figrefs, figemit = figemit); r === nothing ? m : r
+        # `chop` strips the brackets safely; byte slicing breaks on a non-ASCII locator (`[@k, p. 3–4]`).
+        r = _rewrite_bracket_cite(chop(m; head = 1, tail = 1), emit; figrefs = figrefs, figemit = figemit)
+        r === nothing ? m : r
     end)
     (isempty(citekeys) && isempty(figrefs)) && return t
     return replace(t, r"(?<![\w@/])@([\w:.\-]+)" => m -> begin
@@ -437,8 +439,11 @@ function _interp_typst_text(o)
     for ch in o.display
         if ch.mime == "text/latex"
             t = strip(String(copy(ch.data)))
-            startswith(t, "\$\$") && endswith(t, "\$\$") && length(t) >= 4 && return t[3:end-2]
-            startswith(t, "\$")  && endswith(t, "\$")  && length(t) >= 2 && return t[2:end-1]
+            # `chop`, not byte slicing: `$θ$` would index into the middle of the last character.
+            startswith(t, "\$\$") && endswith(t, "\$\$") && length(t) >= 4 &&
+                return chop(t; head = 2, tail = 2)
+            startswith(t, "\$")  && endswith(t, "\$")  && length(t) >= 2 &&
+                return chop(t; head = 1, tail = 1)
             return t
         end
     end
