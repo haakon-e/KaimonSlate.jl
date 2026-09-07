@@ -871,8 +871,9 @@
           { key: 'Mod-Shift-ArrowLeft', run: () => { window.navBack && window.navBack(); return true; } },
           { key: 'Mod-Shift-ArrowRight', run: () => { window.navFwd && window.navFwd(); return true; } },
           { key: 'Mod-/', run: toggleComment }, { key: 'Ctrl-/', run: toggleComment },
-          // Tab: navigate an open popup (down) / open one when a word/`\`/`.` precedes the cursor /
-          // else indent — it never accepts (Enter accepts + closes). Shift-Tab navigates up / indents
+          // Tab in an OPEN popup accepts or navigates down, per the `slateCompleteTab` setting
+          // (default: accept — see `_tabMode`). Closed, it opens the popup when a word/`\`/`.` precedes
+          // the cursor, else indents. Enter always accepts + closes. Shift-Tab navigates up / indents
           // less. (macOS eats Ctrl-Space, so Alt-Space is the reliable manual trigger.)
           { key: 'Tab', run: tabComplete }, { key: 'Shift-Tab', run: shiftTabComplete },
           { key: 'Ctrl-Space', run: startCompletion }, { key: 'Alt-Space', run: startCompletion },
