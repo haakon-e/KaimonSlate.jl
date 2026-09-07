@@ -484,6 +484,7 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
         last.current.out = h; window._swapOutput(md, h); window.typesetVisible(md, c.id);
       }
       if ((c.controls || []).length) window.syncControlValuesSoon(c);
+      window.slateMarkBlank && window.slateMarkBlank(el, c);
       return;
     }
     // A cell you're actively editing is YOURS until you resolve. When its editor holds unsaved edits
@@ -511,6 +512,9 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
     if (!_conflicted && !_stale && c.tables !== last.current.tables) { last.current.tables = c.tables; window.renderTables(c); }
     if (!_conflicted && !_stale && c.animations !== last.current.animations) { last.current.animations = c.animations; window.renderAnimation && window.renderAnimation(c); }
     if ((c.binds && c.binds.length) || (c.controls && c.controls.length)) window.syncControlValuesSoon(c);
+    // Last: whether this cell shows anything is only knowable once its output, charts, tables and
+    // controls are in place. The reading view collapses `.cell-blank` (see notebook.css).
+    window.slateMarkBlank && window.slateMarkBlank(el, c);
 
     // Only a plain code cell has the always-on <Editor> to refresh once it becomes visible.
     const visible = !window.hasBinds(c) && !c.collapsed && !c.codeHidden;

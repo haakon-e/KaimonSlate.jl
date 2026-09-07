@@ -663,7 +663,7 @@ async function commitSource(id) {
     const sed = cell.querySelector('.srcedit'); if (sed) sed.style.display = 'none';
     const d = _disp(cell); if (d) d.style.display = '';
   }
-  renderAll(await api('POST', '/api/cell/' + id, { source: src }));   // re-render in its new form
+  applyAck(await api('POST', '/api/cell/' + id, { source: src }));   // a receipt now; the push re-renders it
 }
 function cancelSource(id) {
   setEditing(id, false);   // destroying a focused editor fires no blur — leave edit mode explicitly
@@ -703,6 +703,38 @@ function revIsNew(c) {
   return seen === undefined || c.rev > seen;
 }
 function revMark(c) { if (c && typeof c.rev === 'number') _cellRev[c.id] = c.rev; }
+
+// Does this cell render anything a reader would see? Drives `.cell-blank`, which the reading view
+// collapses so a pure definition cell leaves no gap mid-document. Replaces a `:has()` chain in the
+// stylesheet: same question, asked once per cell when its contents change, rather than by the browser
+// against every cell on every style recalc.
+//
+// Answered from the CELL, not from its DOM. A chart paints asynchronously — ECharts sizes itself after
+// the render that created its container — so asking the DOM says "nothing here", collapses the cell,
+// and a display:none container can never lay out: the chart then never appears at all. The payload
+// already knows a chart is coming. (`:has()` got away with it by being live; a class is not.)
+//
+// A surfaced control does not count: `b.hosted` means the live widget renders in another cell and
+// this one shows only a chip. A WORKBOOK cell is never blank — its editor is what the reader came for.
+function markBlank(el, c) {
+  if (!el || !el.classList) return;
+  const has = sel => !!el.querySelector(sel);
+  const blank = c
+    ? !(el.classList.contains('workbook')
+        || c.kind === 'md'
+        || /<\w/.test(c.output || '')
+        || (c.echarts || []).length
+        || (c.tables || []).length
+        || (c.animations || []).length
+        || (c.controls || []).flat().length
+        || (c.binds || []).some(b => !b.hosted))
+    // No payload in hand (a caller that only has the element): fall back to the DOM, which is right
+    // for everything already painted.
+    : !(el.classList.contains('workbook') || has('.md') || has('.output *') || has('.tables *')
+        || has('.echarts *') || has('.controls:not(.empty)') || has('.binds > :not(.hostedph)'));
+  el.classList.toggle('cell-blank', blank);
+}
+window.slateMarkBlank = markBlank;
 function resetCellRevs() { for (const k in _cellRev) delete _cellRev[k]; }
 window.slateRevIsNew = revIsNew;
 window.slateRevMark = revMark;
@@ -722,10 +754,19 @@ window.slateResetCellRevs = resetCellRevs;
 // give back exactly the payload we just stopped sending.
 let _gapTimer = null;
 function applyAck(ack) {
-  if (!ack || !ack.revs) { if (ack && ack.cells) updateStates(ack); return; }   // older server: full state
+  // No `revs` means this was not a receipt: a refusal (a workbook 403 carries an error body) or a
+  // transport failure. Nothing to apply either way. There is no full-state fallback because there is
+  // no version skew to absorb — the page's scripts are served by the process answering it.
+  if (!ack || !ack.revs) return;
   clearTimeout(_gapTimer);
   _gapTimer = setTimeout(async () => {
-    const missing = Object.keys(ack.revs).some(id => revIsNew({ id, rev: ack.revs[id] }));
+    // Only cells we have a baseline for. `revIsNew` answers true for a cell never seen, and a
+    // revision is stamped only where a payload actually reached the DOM — so most of a freshly
+    // loaded document has no stamp, and treating that as evidence of a lost push made every receipt
+    // pull the whole document back down. Never stamp here to close that gap: doing it before a cell
+    // renders marks it applied when nothing was drawn, and the cell stays blank until it next
+    // changes (see `revIsNew`).
+    const missing = Object.keys(ack.revs).some(id => _cellRev[id] !== undefined && ack.revs[id] > _cellRev[id]);
     if (!missing) return;
     try { updateStates(await api('GET', '/api/state')); } catch (_) {}   // a push was lost — resync once
   }, 2000);
@@ -780,7 +821,7 @@ function patchCells(cells) {
     }
     if (!_conflicted) { renderCharts(nc); renderTables(nc); syncControlValuesSoon(nc); }
     // Spend the stamp only now, and only if the cell was actually on the page — see `revIsNew`.
-    if (cell) revMark(nc);
+    if (cell) { revMark(nc); markBlank(cell, nc); }
   });
   window.onCellsPatched && window.onCellsPatched(cells);       // states/durations moved (DAG panel)
   window.renderRunPill && window.renderRunPill();              // a cell just changed state → refresh the error pill
@@ -967,7 +1008,7 @@ function updateChrome(state) {
   // doesn't have it. Disable the button up front instead of letting the first turn error out.
   const ab = document.getElementById('agentbtn');
   if (ab) {
-    const avail = state.agentAvailable !== false;   // absent (older server) → assume available
+    const avail = !!state.agentAvailable;   // `state_json` always carries it
     ab.disabled = !avail;
     ab.title = avail ? 'agent chat'
                      : 'agent chat needs Kaimon — this hub is running standalone. Start Kaimon and open the notebook from its hub.';

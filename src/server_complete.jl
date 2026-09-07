@@ -1337,7 +1337,12 @@ function _make_router(h::Hub)
             return _app_denied(req.target)
         end
         edit_cell!(nb, cid, get(b, "source", ""); force = get(b, "force", false) === true)
-        _json(state_json(nb))
+        # The receipt, not the notebook. The result of this run already reaches the browser over the
+        # live `celldone:` push, so answering with full state sends every cell's output a second time
+        # — the dominant cost of a run on a large document. `revs` lets the client notice a push that
+        # never arrived and pull `/state` once (see `applyAck`), which is the cover the full reply
+        # used to give for free. Same trade the bind route already makes.
+        _json(_ack_json(nb))
     end))
     HTTP.register!(router, "POST", "/api/{id}/complete", req -> _withnb(h, req, nb -> begin
         body = _body(req)
