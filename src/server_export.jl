@@ -2850,11 +2850,16 @@ function export_html(nb::LiveNotebook; include_source::Bool = true,
             (:bibliography in c.flags) && continue   # raw BibTeX isn't shown (HTML has no CSL engine yet)
             haskey(rowopen, c.id) && print(io, "<div class=\"exp-row\">")   # open a side-by-side row
             if c.kind == MARKDOWN
-                mdsrc = rw(c.id == fm.titlecell ? _strip_leading_h1(c.source) : c.source)   # citations/refs + hoisted H1
+                # citations/refs + hoisted H1. Dropping the H1 drops whatever interpolations sat in it,
+                # and `markdown_html` pairs the remaining ones positionally, so `c.interp` has to be
+                # advanced by the same amount or the body renders the title's values.
+                mdbody, mdbase = c.id == fm.titlecell ? _body_after_hoisted_h1(c) : (c.source, 0)
+                mdsrc = rw(mdbody)
+                mdinterp = mdbase == 0 ? c.interp : c.interp[min(mdbase + 1, length(c.interp) + 1):end]
                 if haskey(figidx.numbers, c.id)     # caption cell → numbered "Figure N." block
                     print(io, "<figcaption class=\"exp-figcap\" id=\"fig-", _esc(c.id), "\"><b>Figure ",
                           figidx.numbers[c.id], ".</b> ",
-                          _export_embed_html(markdown_html(mdsrc, c.interp), _proj_root(nb); inline = inline_assets, media = media), "</figcaption>")
+                          _export_embed_html(markdown_html(mdsrc, mdinterp), _proj_root(nb); inline = inline_assets, media = media), "</figcaption>")
                 else
                     # A prose sweep is scoped to the cell it swept: the mark id goes on the section so
                     # the client writes a position's strings into THIS cell's `.ival` spans and not
@@ -2863,7 +2868,7 @@ function export_html(nb::LiveNotebook; include_source::Bool = true,
                     pattr = pm isa AbstractDict ? string(" data-replay=\"", _esc(String(get(pm, "id", ""))), "\"") : ""
                     print(io, "<section class=\"exp-md\"", pattr, ">",
                           _strip_attr_templates(
-                              _export_embed_html(markdown_html(mdsrc, c.interp), _proj_root(nb); inline = inline_assets, media = media)),
+                              _export_embed_html(markdown_html(mdsrc, mdinterp), _proj_root(nb); inline = inline_assets, media = media)),
                           "</section>")
                 end
             else
