@@ -511,15 +511,31 @@ end
 # The notebook's project root (its parent project dir — the `@asset` base). "" ⇒ in-process / no project.
 _proj_root(nb::LiveNotebook) = String(get(nb.report.meta, "assetbase", ""))
 
+# Resolve `rel` under `root` and confine it there: the result must BE `root` or sit beneath it.
+# Returns the normalized absolute path, or `nothing` if it escapes.
+#
+# The single implementation of the containment rule. It had been hand-inlined at six call sites in
+# three variants, and three of those tested `startswith(p, root * "/")` with a hard-coded forward
+# slash — on Windows `normpath` emits backslashes, so that comparison is false for every path inside
+# the root and the guard rejects everything (or, written the other way round, admits everything).
+# Comparing against `path_separator` is what makes it hold on both.
+function _confined_path(root::AbstractString, rel::AbstractString)
+    isempty(root) && return nothing
+    rp = normpath(String(root))
+    r = strip(String(rel), ['/', '\\'])
+    # `joinpath(rp, "")` keeps a trailing separator, so an empty `rel` would hand back `root/` where
+    # every other input yields a clean path. Return the root itself.
+    ap = isempty(r) ? rp : normpath(joinpath(rp, r))
+    sep = Base.Filesystem.path_separator
+    (ap == rp || startswith(ap, endswith(rp, sep) ? rp : rp * sep)) || return nothing
+    return ap
+end
+
 # Confine a client-supplied RELATIVE path to `root`: reject absolute paths and any `..` escape.
 # Returns the normalized absolute path, or "" if the root is unset or the path escapes.
 function _safe_proj_path(root::AbstractString, rel::AbstractString)
     (isempty(root) || isempty(rel) || isabspath(rel)) && return ""
-    rp = normpath(String(root))
-    ap = normpath(joinpath(rp, String(rel)))
-    sep = Base.Filesystem.path_separator
-    (ap == rp || startswith(ap, endswith(rp, sep) ? rp : rp * sep)) || return ""
-    return ap
+    return something(_confined_path(root, rel), "")
 end
 
 # Project tree under `root`: dirs (that contain something) before files, alphabetical, skipping
@@ -815,10 +831,8 @@ function _make_router(h::Hub)
             return nothing
         end
         root === nothing && return HTTP.Response(404, "no such package asset dir (package loaded?)")
-        rootn = normpath(root)
-        p = normpath(joinpath(rootn, strip(sub, '/')))
-        # stay inside the vendored dir (accept either separator so the guard holds on Windows too)
-        (p == rootn || startswith(p, rootn * "/") || startswith(p, rootn * "\\")) || return HTTP.Response(404)
+        p = _confined_path(root, sub)             # stay inside the vendored dir
+        p === nothing && return HTTP.Response(404)
         isfile(p) || return HTTP.Response(404, "no such asset")
         bytes = read(p)
         # `provide_assets!` serves a STABLE but MUTABLE path — the file on disk changes when the package is
@@ -874,10 +888,8 @@ function _make_router(h::Hub)
         nb === nothing && return HTTP.Response(404, "no such notebook")
         base = String(get(nb.report.meta, "assetbase", ""))
         isempty(base) && return HTTP.Response(404, "notebook has no asset root")
-        rootn = normpath(base)
-        p = normpath(joinpath(rootn, strip(sub, '/')))
-        # stay inside the project dir (accept either separator so the guard holds on Windows too)
-        (p == rootn || startswith(p, rootn * "/") || startswith(p, rootn * "\\")) || return HTTP.Response(404)
+        p = _confined_path(base, sub)            # stay inside the project dir
+        p === nothing && return HTTP.Response(404)
         isfile(p) || return HTTP.Response(404, "no such asset")
         HTTP.Response(200, ["Content-Type" => _site_ctype(p), "Cache-Control" => "no-store"], read(p))
     end)

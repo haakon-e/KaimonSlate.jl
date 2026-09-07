@@ -103,9 +103,8 @@ function _ext_asset_file(nb::LiveNotebook, url::AbstractString)
     m === nothing && return nothing
     dir = get(nb.assets, HTTP.URIs.unescapeuri(String(m.captures[1])), nothing)
     dir === nothing && return nothing
-    rootn = normpath(dir)
-    p = normpath(joinpath(rootn, strip(HTTP.URIs.unescapeuri(String(m.captures[2])), '/')))
-    (p == rootn || startswith(p, rootn * "/")) && isfile(p) ? p : nothing
+    p = _confined_path(dir, HTTP.URIs.unescapeuri(String(m.captures[2])))
+    (p !== nothing && isfile(p)) ? p : nothing
 end
 
 # A chart spec's `requireScripts` (echarts extensions a chart needs loaded before render, e.g.
@@ -883,11 +882,8 @@ _md_escape_text(s::AbstractString) = replace(String(s), r"[\\`*_\[\]<$]" => s"\\
 # Resolve a project-relative `/asset/` path (already URL-decoded) to its confined absolute file, or
 # `nothing` if `assetbase` is unset or the path escapes the project. Shared by every embedded-media path.
 function _asset_abspath(assetbase::AbstractString, rel::AbstractString)
-    isempty(assetbase) && return nothing
-    rootn = normpath(String(assetbase))
-    p = normpath(joinpath(rootn, strip(String(rel), '/')))
-    (p == rootn || startswith(p, rootn * "/") || startswith(p, rootn * "\\")) || return nothing
-    isfile(p) ? p : nothing
+    p = _confined_path(assetbase, rel)
+    (p !== nothing && isfile(p)) ? p : nothing
 end
 
 # Decode ONE embedded-media URL to (bytes, mime, ext), or `nothing` if it isn't a `data:`/asset ref or
@@ -1120,9 +1116,9 @@ function _web_asset_modules(nb::LiveNotebook)
     while !isempty(queue)
         rel = String(strip(popfirst!(queue), '/'))
         haskey(out, rel) && continue
-        p = normpath(joinpath(rootn, rel))
         # Containment: an asset path is author-controlled, and `../` must not walk out of the tree.
-        (p == rootn || startswith(p, rootn * "/") || startswith(p, rootn * "\\")) && isfile(p) || continue
+        p = _confined_path(rootn, rel)
+        (p !== nothing && isfile(p)) || continue
         out[rel] = read(p)
         _is_js(rel) || continue
         for spec in _js_rel_imports(String(copy(out[rel])))
@@ -4631,9 +4627,8 @@ _site_ctype(p) = (e = lowercase(splitext(p)[2]);
 function _site_file(name::AbstractString, sub::AbstractString)
     root = _site_dir(name)
     (root === nothing || !isdir(root)) && return nothing
-    rootn = normpath(root)
-    p = normpath(joinpath(rootn, strip(sub, '/')))
-    (p == rootn || startswith(p, rootn * "/")) || return nothing      # never escape the site dir
+    p = _confined_path(root, sub)
+    p === nothing && return nothing                                   # never escape the site dir
     isdir(p) && (p = joinpath(p, "index.html"))
     isfile(p) ? p : nothing
 end
