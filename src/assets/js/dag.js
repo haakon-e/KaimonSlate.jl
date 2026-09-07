@@ -519,7 +519,7 @@ async function _dagXferDashRefresh() {
   const allRates = T.flatMap(t => t.pts.map(p => p[1])).filter(r => r > 0);
   const avg = T.length ? T.reduce((a, t) => a + t.avg, 0) / T.length : 0;
   const peak = T.reduce((a, t) => Math.max(a, t.peak), 0);
-  const hum = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1073741824).toFixed(2) + ' GB';
+  const hum = b => window.slateBytes(b);
   const tiles = document.getElementById('dagxd-tiles');
   if (tiles) tiles.innerHTML = [
     ['total moved', hum(totalBytes)], ['transfers', String(T.length)],
@@ -1790,11 +1790,7 @@ function _dagPreview(c, kind) {
   return '';
 }
 
-// Bytes → compact human string (the card's transfer rows; the dash has its own inline copy).
-function _dagBytes(b) {
-  return b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB'
-    : b < 1073741824 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1073741824).toFixed(2) + ' GB';
-}
+const _dagBytes = b => window.slateBytes(b);
 
 // Boundary transfers touching THIS cell, from the live trace ring (/api/transfer-stats). OUTBOUND =
 // a value this cell DEFINES shipped to another region (matched by def name). INBOUND = a value this

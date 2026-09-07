@@ -16,7 +16,7 @@ const fName = signal(''), fWarm = signal(0), fPre = signal(''), fRoot = signal('
       fTr = signal('tunnel'), fPort = signal(''), fSys = signal(false);
 
 const pj = (s) => { try { return JSON.parse(s || '{}'); } catch (_) { return {}; } };
-const fmtB = (b) => (b = +b || 0, b < 1024 ? b + 'B' : b < 1048576 ? Math.round(b / 1024) + 'KB' : b < 1073741824 ? Math.round(b / 1048576) + 'MB' : (b / 1073741824).toFixed(1) + 'GB');
+const fmtB = (b) => window.slateBytes(b, { compact: true });
 const ago = (u) => { let s = Math.max(0, Math.floor(Date.now() / 1000 - (+u || 0))); return s < 90 ? s + 's ago' : s < 5400 ? Math.round(s / 60) + 'm ago' : s < 172800 ? Math.round(s / 3600) + 'h ago' : Math.round(s / 86400) + 'd ago'; };
 const regionsOn = (h) => regions.value.filter(r => r.host === h);
 const confirmP = (msg, ok, cls) => (window.confirmDark ? window.confirmDark(msg, ok, cls) : Promise.resolve(window.confirm(msg)));
