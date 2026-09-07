@@ -18,6 +18,26 @@
           completionStatus, startCompletion, acceptCompletion, snippet,
           cmSearch, cmView } = CM;
 
+  // ── Every live editor view ──────────────────────────────────────────────────────
+  // The audience for a settings change: theme, wrap, keymap, completion delay and the extension
+  // registry all apply across the page, and `window.editors` cannot tell them who that is. It is a
+  // cell→view map, one entry per cell, so a web cell's CSS and JS panes are missing (only the first
+  // pane is registered) and a view built without a cell id — a file editor — is missing outright.
+  // Looping over it recoloured a third of a web cell and none of a file editor.
+  //
+  // So enumerate at the one place a view is ever constructed, `mkEditor`, rather than by unioning
+  // whichever maps happen to exist today. That stays right for editor kinds nobody has written yet,
+  // and leaves `window.editors` to the job it is actually for: finding a given CELL's editor.
+  //
+  // Membership rides on the teardown Preact already runs — the cell and pane effect cleanups call
+  // `destroy()`, which the wrapper in `mkEditor` uses to deregister, so no call site has to know
+  // about this set. The `isConnected` sweep covers a view whose DOM was dropped without one.
+  const _views = new Set();
+  const _allViews = () => {
+    for (const v of _views) if (v.dom && !v.dom.isConnected) _views.delete(v);
+    return [..._views];
+  };
+
   // ── code-highlight theme (Settings → Editor syntax). Each theme is a COMPLETE look — token
   //    colours AND editor chrome (background, gutter, selection, active line, caret) — defined once
   //    in cm6's `slateThemes`. Two Compartments (tokens + chrome) let the choice hot-swap across all
@@ -48,8 +68,10 @@
   // Live-toggle code-editor wrapping across every open editor (markdown stays wrapped regardless).
   window.setEditorWrap = on => {
     localStorage.setItem('slateWrapEditor', on ? '1' : '0');
+    // Guarded like its neighbours: one editor that refuses the dispatch must not strand the rest of
+    // the page half-wrapped.
     for (const v of _allViews())
-      v.dispatch({ effects: wrapComp.reconfigure((v._wrapMd || on) ? EditorView.lineWrapping : []) });
+      try { v.dispatch({ effects: wrapComp.reconfigure((v._wrapMd || on) ? EditorView.lineWrapping : []) }); } catch (_) {}
   };
   // ── Editor keymap (Settings → Editing → Editor keymap) ──────────────────────────
   // `vim` / `emacs` layer an alternative keymap over every cell editor. In a Compartment so the
@@ -75,7 +97,7 @@
   window.setEditorKeymap = mode => {
     const m = _KEYMAP_MODES[mode] ? mode : 'default';
     localStorage.setItem('slateEditorKeymap', m);
-    for (const v of Object.values(window.editors || {})) {
+    for (const v of _allViews()) {
       try { v.dispatch({ effects: keymapModeComp.reconfigure(_keymapExt(m)) }); } catch (_) {}
     }
   };
@@ -178,24 +200,18 @@
 
   window.editors = window.editors || {};
 
-  // Every live editor view, a web cell's CSS and JS panes included. `window.editors` holds one view
-  // per cell, and a web cell registers only its FIRST pane there, so a live-apply loop over that map
-  // alone leaves two thirds of a web cell unreconfigured.
-  const _allViews = () => {
-    const out = Object.values(window.editors || {});
-    for (const w of Object.values(window.webEditors || {}))
-      for (const v of Object.values((w && w.panes) || {})) if (!out.includes(v)) out.push(v);
-    return out;
-  };
-
   // ── Editor-extension registry (extension point) ──────────────────────────────
   // A package can teach EVERY cell editor a new behaviour (e.g. render giac"…" as an
   // inline math field) without editing core — the editor counterpart of
   // slateRegisterWidget. Register a function that, given the editor's context
-  // ({markdown, cellId}), returns CM6 extension(s) to merge in. It's consulted when an
+  // ({markdown, cellId, lang}), returns CM6 extension(s) to merge in. It's consulted when an
   // editor is built, so register at notebook load (before cells hydrate); editors that
   // mount later pick it up. Registered extensions sit BEFORE the default keymap, so a
   // returned keymap can take precedence.
+  //
+  // `lang` is what a web cell's HTML, CSS and JS panes are distinguishable by: they are editors
+  // like any other and get consulted, and an extension that decorates Julia source wants to say so
+  // rather than run over markup. A Julia cell editor leaves it undefined.
   window._slateEditorExts = window._slateEditorExts || [];
   const _editorExtComp = new Compartment();
   const _buildEditorExts = ctx => window._slateEditorExts.flatMap(fn => {
@@ -205,7 +221,7 @@
     if (typeof fn !== 'function' || window._slateEditorExts.includes(fn)) return;
     window._slateEditorExts.push(fn);
     // Apply to editors already open (registration can land after they mounted).
-    for (const v of Object.values(window.editors || {})) {
+    for (const v of _allViews()) {
       try { v.dispatch({ effects: _editorExtComp.reconfigure(_buildEditorExts(v._edctx || {})) }); } catch (e) {}
     }
   };
@@ -805,7 +821,7 @@
             override: [localCompletionSource, scopeCompletionSource(globalThis)] })
         : () => autocompletion({ icons: true, activateOnTypingDelay: _completeDelay() });
     const cellKeys = (opts.keys || []).map(k => ({ key: k.key, run: () => { k.run(); return true; } }));
-    const _edctx = { markdown: !!opts.markdown, cellId: opts.cellId };   // for registered editor extensions
+    const _edctx = { markdown: !!opts.markdown, cellId: opts.cellId, lang: opts.lang };   // for registered editor extensions
     // Web-cell panes (HTML/CSS/JS) indent 2 spaces — the web convention — vs Julia's 4. Drives
     // auto-indent (Enter / indentOnInput) and Tab; the language's indent service reads `indentUnit`.
     const _indent = webLang ? '  ' : '    ';
@@ -929,6 +945,11 @@
     view._wrapMd = !!opts.markdown;   // markdown views stay wrapped when the code-wrap toggle flips
     view._mkAcomp = mkAcomp;          // rebuilds THIS editor's completion source on a settings change
     view._edctx = _edctx;             // ctx for reconfiguring registered editor extensions
+    // Join the live set (see `_allViews`) and leave it on destroy, whoever destroys it — a pane
+    // removed from a web cell, a cell unmounted, a file editor closed.
+    _views.add(view);
+    const _destroy = view.destroy.bind(view);
+    view.destroy = () => { _views.delete(view); _destroy(); };
     if (opts.cellId) window.editors[opts.cellId] = view;
     return view;
   }
