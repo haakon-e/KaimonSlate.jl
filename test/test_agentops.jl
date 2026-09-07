@@ -533,6 +533,15 @@ end
         @test occursin("still running", polled)
         @test occursin("70%", polled) && occursin("phase two", polled)
 
+        # Both the promotion notice and the poll response have to say what to do NEXT, because the
+        # observed failure is an agent that promotes a job and then sleeps out the clock waiting for
+        # it — spending its own time while the worker runs at the same rate regardless. Naming
+        # check_eval isn't enough on its own; the text has to rule sleeping out.
+        for msg in (r.text, polled)
+            @test occursin("check_eval", msg)
+            @test occursin(r"(?i)\bsleep"a, msg)
+        end
+
         # Unknown job ids stay a clean message, not an error.
         @test occursin("No such scratch job", NS.scratch_check("nope"))
     finally
@@ -568,7 +577,7 @@ end
         @info "node not found — skipping the JS assertions"
         @test true
     else
-        for script in ("agent_md.mjs", "click_background.mjs")
+        for script in ("agent_md.mjs", "click_background.mjs", "worker_tabs.mjs", "vim_escape.mjs")
             io = IOBuffer()
             ok = success(pipeline(`$node $(joinpath(@__DIR__, "js", script))`; stdout = io, stderr = io))
             ok || print(String(take!(io)))

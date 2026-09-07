@@ -103,7 +103,9 @@
       <span id="workerpop-title">Worker</span>
       <span id="workerpop-pin" class="workerpop-pin" onclick="wpTogglePin()" title="click to pin this panel">📌</span>
     </div>
+    <div id="workerpop-tabs" class="workerpop-tabs" style="display:none"></div>
     <div id="workerpop-runloc" class="workerpop-runloc" style="display:none"></div>
+    <div id="workerpop-ident" class="workerpop-ident"></div>
     <div id="workerpop-stats" class="workerpop-stats"></div>
   </div>
   <div id="workerpop-log" class="workerpop-log">loading…</div>
@@ -403,6 +405,12 @@
   <div class="setrow"><label title="Theme for code syntax highlighting in the editor — token colours and editor chrome">Editor syntax</label>
     <select id="setsyntax"><!-- options populated from the cm6 theme registry (settings.js) --></select></div>
   <div class="setsec">Editing</div>
+  <div class="setrow"><label title="Alternative keybindings in every cell editor. Vim: Escape steps out one level at a time — completion popup, then insert mode, then the cell (Ctrl-[ only ever leaves insert); :w runs the cell, :q leaves it, :q! discards your edit. Emacs: modeless, Meta is Alt, C-g cancels, M-; toggles comments; Escape still leaves the cell. Shift-Enter runs the cell in every mode.">Editor keymap</label>
+    <select id="seteditorkeymap">
+      <option value="default">Default</option>
+      <option value="vim">Vim</option>
+      <option value="emacs">Emacs</option>
+    </select></div>
   <div class="setrow"><label>Live-update debounce</label>
     <span class="rt"><input type="range" id="setdeb" min="0" max="1000" step="25"/><span id="setdebv"></span> ms</span></div>
   <div class="setrow"><label title="How long to pause typing before the autocomplete popup opens on its own — cuts the flicker of it appearing/vanishing mid-word. Manual Tab / Ctrl-Space are always instant. Applies to newly opened editors.">Autocomplete delay</label>

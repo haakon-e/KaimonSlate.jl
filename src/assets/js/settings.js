@@ -222,6 +222,18 @@ function openSettings() {
     // Live across every open editor via setCompleteDelay (reconfigures the autocompletion compartment).
     cd.oninput = () => { cdv.textContent = cd.value; window.setCompleteDelay ? window.setCompleteDelay(cd.value) : localStorage.setItem('slateCompleteDelay', cd.value); };
   }
+  // Editor keymap (default / vim / emacs). Live across every open editor — the alternative keymap
+  // sits in its own compartment, so switching reconfigures the views in place rather than rebuilding
+  // them. Options a build didn't bundle are dropped, so the menu can't offer a mode that won't apply.
+  const km = document.getElementById('seteditorkeymap');
+  if (km) {
+    const have = window.editorKeymapModes ? window.editorKeymapModes() : [];
+    for (const o of [...km.options]) {
+      if (o.value !== 'default' && !have.includes(o.value)) o.remove();
+    }
+    km.value = window.editorKeymapMode ? window.editorKeymapMode() : 'default';
+    km.onchange = () => { window.setEditorKeymap && window.setEditorKeymap(km.value); };
+  }
   const ct = document.getElementById('setcomptab');
   if (ct) {
     ct.value = localStorage.getItem('slateCompleteTab') || 'accept';
