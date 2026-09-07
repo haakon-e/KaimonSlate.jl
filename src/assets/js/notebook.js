@@ -481,7 +481,7 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
         // Dispose any inline `{{ echart }}` instances before the innerHTML swap orphans their nodes
         // (their ECharts instance + zrender would otherwise leak on every markdown re-render).
         md.querySelectorAll('.ichart').forEach(e => { if (e._inst) { try { e._inst.dispose(); } catch (_) {} e._inst = null; } });
-        last.current.out = h; window._swapOutput(md, h); window.typesetVisible(md, c.id);
+        last.current.out = h; window._swapOutput(md, h, '', () => window.typesetVisible(md, c.id));
       }
       if ((c.controls || []).length) window.syncControlValuesSoon(c);
       window.slateMarkBlank && window.slateMarkBlank(el, c);
@@ -499,7 +499,7 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
     // see its definition in view.js.
     const _stale = window.slateRevIsNew ? !window.slateRevIsNew(c) : false;
     const out = el.querySelector('.output');
-    if (!_conflicted && !_stale && out && c.output !== last.current.out) { window.slateRevMark && window.slateRevMark(c); last.current.out = c.output; window._swapOutput(out, c.output, c.live); window.typesetVisible(out, c.id); window._clampOutputs && window._clampOutputs(out); }
+    if (!_conflicted && !_stale && out && c.output !== last.current.out) { window.slateRevMark && window.slateRevMark(c); last.current.out = c.output; window._swapOutput(out, c.output, c.live, () => { window.typesetVisible(out, c.id); window._clampOutputs && window._clampOutputs(out); }); }
     window._applyErrorLine && window._applyErrorLine(c);   // tint the offending line
     window._applyMissingPkg && window._applyMissingPkg(c);   // "Package X not found" → one-click install banner
     // Only re-apply setOption / refill rows when the chart/table DATA actually changed — reference

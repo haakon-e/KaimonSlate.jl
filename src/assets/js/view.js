@@ -815,8 +815,8 @@ function patchCells(cells) {
       cell.className = cell.className.replace(/\bstate-\S+/, 'state-' + (_conflicted ? 'edited' : nc.state));
       const badge = cell.querySelector('.badge'); if (badge) badge.textContent = _conflicted ? 'edited' : nc.state;
       if (!_conflicted) {
-        if (nc.kind === 'md') { const md = cell.querySelector('.md'); if (md) { _swapOutput(md, mdHtml(nc)); typeset(md); } }
-        else { const out = cell.querySelector('.output'); if (out) { _swapOutput(out, nc.output, nc.live); typeset(out); } }
+        if (nc.kind === 'md') { const md = cell.querySelector('.md'); if (md) _swapOutput(md, mdHtml(nc), '', () => typeset(md)); }
+        else { const out = cell.querySelector('.output'); if (out) _swapOutput(out, nc.output, nc.live, () => typeset(out)); }
       }
     }
     if (!_conflicted) { renderCharts(nc); renderTables(nc); syncControlValuesSoon(nc); }
@@ -1199,37 +1199,69 @@ function syncControlValues(state) {
 // Preact and stick — the pulsing-bracket bug). Cleared when the authoritative state arrives.
 function setState(id, s) { window.slateStore && window.slateStore.setLiveState(id, s); }
 
-// Replace a cell's output, reserving its current height until the new content
-// (notably a base64 <img>, which has no size until it decodes) lays out. Without
-// this the output collapses to ~0 height mid-swap; Safari then clamps scrollTop to
-// the now-shorter page and the figure scrolls out of view (the P2 scroll bug).
+// Replace a cell's output, reserving its current height until the new content lays out. Without
+// this the output collapses to ~0 height mid-swap; Safari then clamps scrollTop to the now-shorter
+// page and the figure scrolls out of view (the P2 scroll bug).
 // `live` is the cell's session-boundness marker ('render' | 'placeholder' | '') — see `_live_output_placeholder`.
-function _swapOutput(out, html, live) {
+// `after` is the caller's post-swap work (typesetting, clamping) on the NEW content. It is a
+// callback rather than the next statement because a figure swap finishes asynchronously below.
+function _swapOutput(out, html, live, after) {
+  const finish = () => { if (after) after(); };
   // A SESSION-BOUND output the page has already booted outranks the placeholder that stands in for it.
   // The placeholder is right for a fresh page (the stored HTML belongs to a dead session), but it rides
   // in every full-state payload — and every mutating API call answers with full state — so without this
   // the next run of ANY cell blanks a working live output back to "connecting…", permanently: nothing
   // re-renders it until the next SSE connect. Keep the mounted one (and its `__slateOut`, so the matching
   // `celldone` re-render stays a no-op). Extension-agnostic: no markup is inspected, only the flag.
-  if (live === 'placeholder' && out.__slateLive) return;
+  if (live === 'placeholder' && out.__slateLive) return finish();
   // A single run swaps the output TWICE — the `celldone:` push (patchCells) AND the run's HTTP-response
   // render (the Preact <Cell> effect) both carry the SAME output. Re-running its <script> twice re-boots a
   // figure needlessly and, for a side-effecting web-cell fragment, fires its effect twice (a double
   // `alert`, a double append). Skip a swap whose output already matches what's mounted: identical output
   // never needs to re-render or re-run. A genuinely new output (or a real change on re-run) still swaps.
-  if (out.__slateOut === html) return;
+  if (out.__slateOut === html) return finish();
   out.__slateOut = html;
   out.__slateLive = live === 'render';
-  out.style.minHeight = out.offsetHeight + 'px';
-  out.innerHTML = html;
-  runScripts(out);   // <script> set via innerHTML is inert — re-create so figures boot
-  mountOutputComponents(out);   // mount any `slate_render` component OUTPUTS in the freshly-swapped output
-  const imgs = out.querySelectorAll('img');
-  const release = () => { out.style.minHeight = ''; };
-  if (!imgs.length) { requestAnimationFrame(release); return; }
-  let n = imgs.length;
-  const done = () => { if (--n <= 0) release(); };
-  imgs.forEach(im => im.complete ? done() : (im.onload = im.onerror = done));
+
+  // Parse off-DOM first. Assigning `out.innerHTML` tears the previous figure out immediately and
+  // puts up an <img> that has nothing to paint until its bytes arrive and decode, so every
+  // re-render shows a hole for at least one frame — the flicker you see dragging a slider that
+  // drives a plot. A detached div still belongs to this document, so its images fetch and decode
+  // there while the old figure is untouched on screen; the swap is then one frame from one picture
+  // to the next. (A <template> will not do: its contents are inert and never fetch anything.)
+  const stage = document.createElement('div');
+  stage.innerHTML = html;
+  const imgs = Array.from(stage.querySelectorAll('img')).filter(im => im.src);
+
+  // Two figure renders can be in flight at once (a fast slider outruns a decode). Only the latest may
+  // land — an older one committing afterwards would put a superseded plot back on the page.
+  const seq = (out.__slateSwapSeq = (out.__slateSwapSeq || 0) + 1);
+  const commit = () => {
+    if (out.__slateSwapSeq !== seq) return;
+    out.style.minHeight = out.offsetHeight + 'px';
+    out.replaceChildren(...Array.from(stage.childNodes));
+    runScripts(out);   // a <script> from parsed HTML is inert — re-create so figures boot
+    mountOutputComponents(out);   // mount any `slate_render` component OUTPUTS in the freshly-swapped output
+    const mounted = out.querySelectorAll('img');
+    const release = () => { out.style.minHeight = ''; };
+    if (!mounted.length) requestAnimationFrame(release);
+    else {
+      let n = mounted.length;
+      const one = () => { if (--n <= 0) release(); };
+      mounted.forEach(im => im.complete ? one() : (im.onload = im.onerror = one));
+    }
+    finish();
+  };
+  if (!imgs.length) return commit();   // text, markdown, tables: nothing to wait for
+
+  // A broken image is not what this guards: a 404 rejects fast and commits right away. It guards a
+  // fetch that stalls, where the alternative to waiting is showing the reader a hole. Holding the
+  // previous figure is the better answer for as long as it stays plausible, hence a whole second.
+  let committed = false;
+  const go = () => { if (committed) return; committed = true; clearTimeout(deadline); commit(); };
+  const deadline = setTimeout(go, 1000);
+  Promise.all(imgs.map(im => im.decode ? im.decode().catch(() => {})
+                                       : new Promise(r => { im.onload = im.onerror = r; }))).then(go);
 }
 
 // A <script> assigned via innerHTML is parsed but never executed. Rich output
