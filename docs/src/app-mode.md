@@ -8,6 +8,8 @@ results — and nothing that can put the document into a state they can't recove
 App mode is that second posture. The notebook still runs live: sliders move, fits recompute, figures
 redraw. What's gone is everything that edits it.
 
+![A notebook served as an app: title, prose, two sliders and the chart and table they drive, with no editors, no cell chrome and no toolbar](./assets/app-view.png)
+
 ## Serving an existing notebook as an app
 
 App mode is a property of the **process**, not of the document. A hub started with `app = true`
@@ -149,10 +151,14 @@ export_app(nb, "dist/exercises"; workbook = true)
 Preview either posture while authoring by appending `?app=1` or `?app=1&workbook=1` to a notebook
 URL. As with the app preview, that gives you the view and none of the enforcement.
 
+![The same document served as a workbook: the read-only cells render as prose and output, while the exercise cells below them are editable](./assets/app-workbook.png)
+
 ### What the reader gets
 
 Tagged cells come back as editors, framed and labelled "your turn". Each one has **Run** and
 **Reset to the original**. Running an exercise also saves it, so the reader's work survives a reload.
+
+![A workbook exercise cell: an accent-bordered frame labelled YOUR TURN, an editable stub function, its output, and Run and Reset to the original buttons](./assets/workbook-cell.png)
 
 They also get a scratchpad for working out an answer before committing it (⌘⇧S, or the floating 🧪
 launcher), which never touches the document. The command palette returns with a reader-only command

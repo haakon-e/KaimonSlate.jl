@@ -7,6 +7,8 @@ loads. The **📁 Files** panel puts those in the browser beside the notebook.
 Open it from the **📁 Files** button in the top bar, or by clicking the notebook's title. There is no
 keyboard shortcut.
 
+![The Files panel: the project tree on the left with folders and file sizes, and the file pane on the right](./assets/files-panel.png)
+
 ## What the tree shows
 
 The root is the **enclosing project**: the directory holding the nearest `Project.toml`, found by
@@ -55,6 +57,8 @@ Click a file to open it on the right.
 Classification is by filename. Around 60 extensions are treated as text, plus common
 extensionless names like `Dockerfile`, `Makefile`, `LICENSE` and `README`. A binary file and an
 `.svg` both offer **≡ Open as text** if you want to see the bytes anyway.
+
+![A Julia file open in the Files panel: the filter narrowed to one match, the file's path, Open as notebook and Download actions, and the source with line numbers and syntax highlighting](./assets/files-editor.png)
 
 Syntax highlighting covers the four grammars the editor bundles: CSS, HTML, JavaScript and Julia.
 Julia's grammar is reused for Python, R, TOML, YAML and shell, which share its comment character and

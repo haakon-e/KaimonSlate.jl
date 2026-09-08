@@ -35,6 +35,8 @@ The JS pane runs with three things of its own:
 
 An error thrown or a promise rejected in the pane renders onto the cell.
 
+![A web cell with its HTML, CSS and JS panes stacked above the rendered output: interpolated notebook values, a root.querySelector call, an echo line, and the bar chart the JS drew](./assets/web-cell.png)
+
 - **It's reactive.** The variables inside `{{ }}` are the cell's inputs, so the web cell re-renders
   whenever they change — drag a `@bind freq` slider and the markup updates live, with no `slateCall`
   needed for a simple readout.

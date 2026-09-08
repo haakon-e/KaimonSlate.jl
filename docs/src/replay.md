@@ -89,6 +89,8 @@ top-level `using`/`import`, a `const` or `global`, or another Slate macro in the
 Choosing HTML export opens a second step listing every mark: how many positions it has, how long one
 takes, and how many bytes it will add. Totals are shown for the export as a whole.
 
+![The replay step of the export dialog: one row per marked control showing its cell, kind, value count and measured size, a stride slider for each slider-driven mark, "all options" for a menu, and the totals with Back and Export buttons](./assets/replay-step.png)
+
 A slider or a bounded `NumberField` can be **strided**, shipping every n-th position instead of all of
 them. That divides both the sweep time and the size, and the page snaps the control to the nearest
 shipped position so it still feels continuous. Categorical controls cannot be strided, because

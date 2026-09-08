@@ -6,6 +6,11 @@ separate job: registering the package, and then filling in as much of the card a
 Registering is the only requirement. Everything below it is optional, and a listing improves one
 field at a time.
 
+This is the card the keys on this page produce: the title, tagline and icon in the header, the
+screenshots, the Provides list, and the starter snippet.
+
+![An extension's detail card in the gallery: icon and title, tagline, description, a Provides list, a Getting started snippet, and the install action](./assets/extensions-detail.png)
+
 ## Register the package
 
 Extensions are listed because they are in `SlateRegistry`, a curated package registry that sits
@@ -125,6 +130,8 @@ are allowed to disagree.
 
 To check: open `https://kahliburke.github.io/SlateRegistry/#YourPkg`, or open the gallery in a
 notebook and press **Check for updates**, which bypasses the six-hour client cache.
+
+![The Extensions gallery list: entries with icons, taglines and category chips, one of them showing an installed badge](./assets/extensions-gallery.png)
 
 ## Private repositories
 

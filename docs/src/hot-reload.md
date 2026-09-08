@@ -14,9 +14,13 @@ A banner appears at the top left:
 
 with **Run affected**, **Re-run all (safe)** and a dismiss button. It stays until you act on it.
 
+![The hot-reload banner: "Project source changed, ~4 cells likely affected (our guess may be incomplete)" above Run affected (4) and Re-run all (safe) buttons](./assets/srcreload-banner.png)
+
 When Slate cannot work out which cells are involved it says so and leads with **Re-run all (safe)**
 instead. If your edit does not compile you get a red banner naming the error, with no buttons, and
 tracking resumes as soon as the file parses again.
+
+![The error variant of the banner: "Source didn't compile" followed by the error message, with only a dismiss button](./assets/srcerror-banner.png)
 
 Ignoring the banner is fine. The affected cells are already stale, so the ordinary Run-stale path
 picks them up whenever you get to it.

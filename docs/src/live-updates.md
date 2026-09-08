@@ -18,6 +18,8 @@ A reactive is **written on the kernel that declared it** and read anywhere. A ce
 [region](regions.md) can read one, but writing it there throws. Put the write in a cell on the
 declaring kernel.
 
+![A cell reading a reactive value, rendering it as a live chart that redraws on every push](./assets/reactive-gauge.png)
+
 ```julia
 #%% code id=level
 @reactive level = 0      # a live Int, initially 0
@@ -50,6 +52,8 @@ recompute** — the body fires directly, and a **new click cancels the still-run
     pause(0.1)       # a cancellable sleep (see below)
 end
 ```
+
+![A Button widget rendered in a cell, the control an @onclick handler is bound to](./assets/onclick-button.png)
 
 `@onchange control (body)` is the same idea for any control: run a body on each change, with the
 new value bound, without recomputing the cell — `@onchange n (level[] = n)`.
@@ -109,6 +113,8 @@ for i in 1:n
     heavy(i)
 end
 ```
+
+![A cell mid-run with its progress bar filled part way, labelled "reducing 23/40 · 57%", and the cell badged RUNNING](./assets/progress-bar.png)
 
 ## Reacting to files — `@asset`
 

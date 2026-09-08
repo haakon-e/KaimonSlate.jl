@@ -49,6 +49,8 @@ entry. A single value larger than the cap can never stay cached.
 
 Set these with the 🏷 tag editor or a `#%%` header token — see [Cell Tags](cell-tags.md#caching).
 
+![The tag editor popover over a cell header, with the Caching & execution group offering cache, nocache, resource, locked and trace](./assets/tag-editor.png)
+
 Never cached: markdown cells, `using`/`import` barriers, notebook-local function definitions,
 [`resource`](cell-tags.md) cells (live DB/file/socket handles), cells that declare a `reactive` or
 carry [`@replay`](replay.md) (both create live session state by running), and cells the engine
