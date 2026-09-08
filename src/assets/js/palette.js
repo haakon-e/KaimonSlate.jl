@@ -208,7 +208,11 @@ function paletteCommands() {
     { label: 'Open notebook in VS Code', run: () => { const p = nbState && nbState.path; if (p) location.href = 'vscode://file' + p; } },
     { label: 'Open project in VS Code', run: () => { const d = nbState && (nbState.project || window.PLATFORM.dirOf(nbState.path || '').replace(/[\/\\]$/, '')); if (d) location.href = 'vscode://file' + d; } },
     { label: 'Extensions… (browse the Slate extension catalog)', tag: 'panel', run: () => window.openExtensions && window.openExtensions() },
-    { label: 'Settings…', run: openSettings },
+    { label: 'Settings…', tag: 'panel', run: openSettings },
+    // Same dialog as above, opened on its per-notebook scope. It has no menu entry of its own (one
+    // Settings is enough chrome), so this keeps "notebook config" — what people still call it and
+    // search for — pointing somewhere.
+    { label: 'Settings: this notebook… (config / overrides)', tag: 'panel', run: () => openSettings('notebook') },
     { label: 'All notebooks', run: () => { location.href = '/'; } },
   ];
   // Extension-contributed commands, badged with the owning package (see slateRegisterCommand).

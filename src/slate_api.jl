@@ -182,6 +182,20 @@ Note a JS function CANNOT be passed here (or to any `formatter`): an option is s
 with no reviver, so a function-shaped string arrives as a string, and ECharts calling it throws on
 every tooltip update — which wedges the crosshair rather than failing visibly. `valuefmt` exists
 precisely because that route doesn't work."""),
+    SlateApiEntry("renderer", "Charts",
+        "How a chart rasterises — `:canvas` (default) or `:svg`.",
+        ["svg", "canvas", "vector", "blank chart", "black chart", "print", "crisp"],
+        "echart(…; renderer = :svg)",
+        """How an interactive chart is drawn. `:canvas` (the default) rasterises to a bitmap and stays
+fast on large series; `:svg` draws into the DOM, so text stays selectable and crisp under zoom and
+print.
+```julia
+echart(:line, x, y; renderer = :svg)
+```
+A reader can override this for themselves in **Settings → Chart renderer**, and that choice wins —
+a browser that cannot composite a canvas draws every chart as a blank rectangle, and the reader
+hitting that is usually not the author. In a static HTML export, where there is no Settings panel,
+`?renderer=svg` on the URL does the same."""),
     SlateApiEntry("series", "Charts",
         "One named series of a multi-series `echart` (mixed kinds, dual axes).",
         ["overlay", "legend", "multiple", "dual axis"],

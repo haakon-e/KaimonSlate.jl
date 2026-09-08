@@ -122,6 +122,8 @@ function _htmlBaseParts() {
   if (override) parts.push('override=1');
   if (code !== 'normal') parts.push('code=' + code);
   const wqs = _htmlWidthQS(); if (wqs) parts.push('width=' + wqs);
+  // Force one renderer for every chart in this export ('' = each chart keeps its own `renderer=`).
+  const rend = (document.getElementById('htmlrenderer') || {}).value || ''; if (rend) parts.push('renderer=' + rend);
   const outv = (document.getElementById('exoutputs') || {}).value || 'all'; if (outv !== 'all') parts.push('outputs=' + outv);
   // Fully offline: inline KaTeX/ECharts/dagre (+ the Preact stack) instead of linking a CDN, so the page
   // renders with no network at all. Bigger file; required for a locked-down viewer or an archival copy.
@@ -679,7 +681,7 @@ function openExport(preset) {
   const ss = document.getElementById('sitesource'); if (ss) ss.checked = localStorage.getItem('slate_sitesource') !== '0';
   const srn = document.getElementById('siterunnable'); if (srn) srn.checked = localStorage.getItem('slate_siterunnable') === '1';
   const sh = document.getElementById('sitehistory'); if (sh) sh.checked = localStorage.getItem('slate_sitehistory') === '1';
-  ['htmltheme', 'htmlcode', 'exoutputs', 'mdimg', 'sitetheme'].forEach(id => { const el = document.getElementById(id), v = localStorage.getItem('slate_' + id); if (el && v != null) el.value = v; });
+  ['htmltheme', 'htmlcode', 'htmlrenderer', 'exoutputs', 'mdimg', 'sitetheme'].forEach(id => { const el = document.getElementById(id), v = localStorage.getItem('slate_' + id); if (el && v != null) el.value = v; });
   const hw = document.getElementById('htmlwidth'); if (hw) hw.value = localStorage.getItem('slate_htmlwidth') || '900'; _htmlWidthSync();
   if (preset === 'slides') document.getElementById('pdflayout').value = 'slides|1';
   ['appdir', 'apptitle', 'appexptheme', 'apppagewidth', 'appport', 'appinclude'].forEach(id => {
@@ -739,7 +741,7 @@ function closeExport(go) {
     const hh = document.getElementById('htmlhistory'); if (hh) localStorage.setItem('slate_htmlhistory', hh.checked ? '1' : '0');
     const ho = document.getElementById('htmloffline'); if (ho) localStorage.setItem('slate_htmloffline', ho.checked ? '1' : '0');
     const hc = document.getElementById('htmlcompress'); if (hc) localStorage.setItem('slate_htmlcompress', hc.checked ? '1' : '0');
-    ['htmltheme', 'htmlcode'].forEach(id => { const el = document.getElementById(id); if (el) localStorage.setItem('slate_' + id, el.value); });
+    ['htmltheme', 'htmlcode', 'htmlrenderer'].forEach(id => { const el = document.getElementById(id); if (el) localStorage.setItem('slate_' + id, el.value); });
     // A notebook with `@replay` marks gets a SECOND step before anything is produced: those controls
     // cost real computation and carry real bytes, and this is the only moment that decision can be made.
     // Nothing is exported until it is settled. A notebook without marks goes straight out, unchanged.
