@@ -531,7 +531,7 @@ const _DBLOB_DIR = Ref{String}("")
 function _dblob_dir()
     if _DBLOB_DIR[] == ""
         d = joinpath(get(ENV, "XDG_CACHE_HOME", joinpath(get(ENV, "HOME", tempdir()), ".cache")), "kaimonslate", "blobs")
-        try; mkpath(d); catch; d = joinpath(tempdir(), "kaimonslate-blobs"); mkpath(d); end
+        try; mkpath(d); catch; d = joinpath(tempdir(), "kaimonslate-" * get(ENV, "USER", "user") * "-blobs"); mkpath(d); end
         _DBLOB_DIR[] = d
     end
     return _DBLOB_DIR[]

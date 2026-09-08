@@ -3487,7 +3487,7 @@ function serve_notebook(path::AbstractString; host = "127.0.0.1", port = 8765, q
                         inactive::Bool = false, app::Bool = false, workbook::Bool = false,
                         appdefaults::AbstractDict = Dict{String,Any}())
     # Swap the logger BEFORE anything spawns so worker-spawn infos land in the file.
-    logpath = joinpath(tempdir(), "kaimonslate", "hub-$port.log")
+    logpath = joinpath(ReportEngine._slate_tmpdir(), "hub-$port.log")
     logio = nothing
     prevlogger = nothing
     if quiet

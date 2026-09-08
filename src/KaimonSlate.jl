@@ -896,7 +896,7 @@ function create_tools(GateTool::Type)
             if !(k.target isa ReportEngine.RemoteTarget)
                 ReportEngine.shutdown!(k)
                 for ext in ("log", "json", "state", "stats")
-                    try; rm(joinpath(tempdir(), "kaimonslate", "worker-$(k.port).$ext"); force = true); catch; end
+                    try; rm(joinpath(ReportEngine._slate_tmpdir(), "worker-$(k.port).$ext"); force = true); catch; end
                 end
                 return "✅ reaped worker-$(k.port) for '$(nb.id)' (process killed, files removed). " *
                        "It has no worker until the next run — action=restart brings one straight back."

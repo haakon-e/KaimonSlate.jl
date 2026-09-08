@@ -703,6 +703,10 @@ function _worker_script(port::Int, stream_port::Int, parent::AbstractString = ""
     """
 end
 
+# tempdir() is shared by every user on the machine, so a fixed "kaimonslate" name is owned by
+# whoever creates it first and unwritable (0700) for everyone else. Namespace it per user.
+_slate_tmpdir() = joinpath(tempdir(), "kaimonslate-" * get(ENV, "USER", "user"))
+
 function _spawn_worker!(k::GateKernel)
     k.ns_gen += 1   # a fresh LOCAL process ⇒ blank namespace (mirrors spawn_and_connect_remote!): the
                     # ns_gen-keyed re-establish re-primes it — main-kernel @bind registrations here, and
@@ -711,7 +715,7 @@ function _spawn_worker!(k::GateKernel)
     port, stream_port = _next_ports()
     k.port = port; k.stream_port = stream_port
     _clear_stale_pin!(port)
-    logdir = joinpath(tempdir(), "kaimonslate"); mkpath(logdir)
+    logdir = _slate_tmpdir(); mkpath(logdir)
     # Worker stdout/stderr can carry notebook data — keep the shared tmp dir private (0700) so
     # other local users can't read the logs; the file itself is locked to 0600 when opened below.
     Sys.isunix() && (try; chmod(logdir, 0o700); catch; end)
@@ -761,14 +765,19 @@ function _spawn_worker!(k::GateKernel)
     close(out.in)
     online = k.online   # captured once — a respawn gets a fresh GateKernel, so this can't go stale mid-pump
     Threads.@spawn begin
-        io = open(k.logpath, "w")
-        Sys.isunix() && (try; chmod(k.logpath, 0o600); catch; end)
+        io = nothing
+        try
+            io = open(k.logpath, "w")
+            Sys.isunix() && (try; chmod(k.logpath, 0o600); catch; end)
+        catch e
+            @warn "SlateWorker log file could not be opened — worker output is being discarded" log = k.logpath exception = e
+        end
         try
             # Line-by-line (not chunked `readavailable`) so a slow first-run precompile can narrate
             # itself live via `online`, mirroring the remote path's `_run_streamed`. Net effect on the
             # log file is the same content, just written one newline-terminated line at a time.
             for line in eachline(out)
-                println(io, line); flush(io)
+                io === nothing || (println(io, line); flush(io))
                 if online !== nothing
                     s = strip(line)
                     isempty(s) || (try; online(String(s)); catch; end)
@@ -776,7 +785,7 @@ function _spawn_worker!(k::GateKernel)
             end
         catch
         finally
-            close(io)
+            io === nothing || close(io)
         end
         # EOF on the pipe means the PROCESS is gone. That is the one death signal which is exact and
         # immediate — the liveness probe can only ever infer death from silence, and silence is also
