@@ -721,6 +721,21 @@ async function appShots(browser) {
   } catch (e) { log('! app shots skipped:', e.message.split('\n')[0]) }
 }
 
+// ── the Settings dialog, both scopes (the full run captures these inline too) ───────────────────
+async function settingsShots(browser) {
+  try {
+    const page = await (await newContext(browser)).newPage()
+    await runNotebook(page, 'demo')
+    await page.evaluate(() => window.openSettings && window.openSettings())
+    await sleep(900)
+    await elShot(page, '#setbg .setmodal', 'settings.png')
+    await page.evaluate(() => window.setSettingsScope && window.setSettingsScope('notebook'))
+    await sleep(1200)
+    await elShot(page, '#setbg .setmodal', 'settings-notebook.png')
+    await page.context().close()
+  } catch (e) { log('! settings shots skipped:', e.message.split('\n')[0]) }
+}
+
 // ── the Files panel (real — the demo notebooks sit in a project, so the tree has a root) ───────
 async function filesShots(browser) {
   try {
@@ -842,6 +857,7 @@ async function main() {
     if (process.env.SLATE_REPLAY_ONLY === '1') { await replayShots(browser); log('done (replay-only)'); return }
     if (process.env.SLATE_LIVE_ONLY === '1') { await liveShots(browser); log('done (live-only)'); return }
     if (process.env.SLATE_WEB_ONLY === '1') { await webShots(browser); log('done (web-only)'); return }
+    if (process.env.SLATE_SETTINGS_ONLY === '1') { await settingsShots(browser); log('done (settings-only)'); return }
     // All of the above in one server boot, for iterating on the newer groups together.
     if (process.env.SLATE_NEW_ONLY === '1') {
       await appShots(browser); await filesShots(browser); await bannerShots(browser)
@@ -923,10 +939,15 @@ async function main() {
           await page.evaluate(() => window.toggleHistory && window.toggleHistory())
         } catch (e) { log('! history-panel skipped:', e.message.split('\n')[0]) }
 
-        // settings modal
+        // Settings modal, both scopes. The section list is built from the group headers of whichever
+        // scope is active, and the per-notebook rows are fetched, so give each a moment to populate.
         try {
           await page.evaluate(() => window.openSettings && window.openSettings())
+          await sleep(900)
           await elShot(page, '#setbg .setmodal', 'settings.png')
+          await page.evaluate(() => window.setSettingsScope && window.setSettingsScope('notebook'))
+          await sleep(1200)
+          await elShot(page, '#setbg .setmodal', 'settings-notebook.png')
           await page.evaluate(() => window.closeSettings && window.closeSettings())
         } catch (e) { log('! settings skipped:', e.message.split('\n')[0]) }
 

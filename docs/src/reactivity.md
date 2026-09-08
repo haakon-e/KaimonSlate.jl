@@ -19,7 +19,7 @@ Editing **C** marks only C.
 
 Cells that depend on each other run in order. Cells that do not run **at the same time**, which is on
 by default. Document order is the safety backstop, so two cells writing the same name still run in
-order. Turn it off per notebook under **☰ → 🎚 Notebook config** if a cell's side effects need strict
+order. Turn it off per notebook under **⚙ Settings → This notebook** if a cell's side effects need strict
 document order.
 
 !!! warning "One namespace, last writer wins"

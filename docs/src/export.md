@@ -26,6 +26,7 @@ Options for this format:
 | --- | --- |
 | **Outputs** | All, figures only, or prose and code only. |
 | **Theme** | As-is, Light, or Dark. Overriding re-renders every figure for the export. |
+| **Chart renderer** | Auto (each chart's own setting), Canvas, or SVG. SVG is vector, so it stays crisp in print. A reader can override it with `?renderer=svg` on the URL. |
 | **Code size** | Normal down to tiny. |
 | **Page width** | The content column, from 620px to full width. |
 | **Source** | Include cell sources, or export outputs only. |

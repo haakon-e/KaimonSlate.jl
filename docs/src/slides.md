@@ -57,7 +57,7 @@ Remember to drag the slider here.
 
 Set the **slide level** (the heading depth that starts a slide, 1 through 6, default 2 for `##`),
 the **transition**, and the **aspect ratio** (16:9 or 4:3) per notebook in
-**☰ → 🎚 Notebook config** (see [Configuration](configuration.md#Notebook-config)). These pin
+**⚙ Settings → This notebook** (see [Configuration](configuration.md#This-notebook)). These pin
 to the notebook and travel in its `.jl`.
 
 The live deck follows the editor theme. A PDF deck takes its theme from the export dialog.
@@ -89,4 +89,4 @@ Present is the slide deck; Zen is the document.
 !!! tip "One source, three artifacts"
     The same notebook is a live document, a full-screen presentation, and a typeset PDF deck. Add a
     few `##` headings and it's already a deck — refine with `slide` / `notes` tags and the
-    Notebook-config knobs.
+    per-notebook settings.

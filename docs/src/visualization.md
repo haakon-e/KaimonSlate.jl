@@ -119,6 +119,20 @@ echart(:line, ν, absorbance; select = :span)
 
 Dragging the chart and moving the slider are two ways into one value.
 
+### Choosing a renderer
+
+ECharts draws to a canvas by default, which stays fast on large series. `renderer = :svg` draws into
+the DOM instead, so text stays selectable and crisp under zoom and print:
+
+```julia
+echart(:line, x, y; renderer = :svg)
+```
+
+This is a preference, not a guarantee. A reader can set their own in
+[Settings](configuration.md#Chart-renderer) and that wins, because whether the canvas path works
+depends on the browser doing the viewing, and the person hitting a blank chart is usually not the
+author. On a static export the equivalent is `?renderer=svg` on the URL.
+
 ### Formatting tooltip numbers
 
 `valuefmt` takes the same vocabulary as a [table's](tables.md#Column-formatting) formats:

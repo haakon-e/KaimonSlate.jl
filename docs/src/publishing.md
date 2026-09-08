@@ -51,6 +51,8 @@ to make the notebook that site's front page, and set:
 - **Outputs** — all, figures only, or none.
 - **Theme** — *As-is* (default, keeps the notebook's live palette), or *Light* / *Dark*, which force
   one and re-render native Makie figures to match.
+- **Renderer** — how charts are drawn on the published page: *Auto* keeps each chart's own setting,
+  *SVG* renders them all as vector.
 - **Width** — the content column of the published page; the far end is full width.
 - **Document path** (`slug`) — the `/<slug>/` this document lives at; auto-filled from the title.
   Re-publishing the same slug **updates it in place**.

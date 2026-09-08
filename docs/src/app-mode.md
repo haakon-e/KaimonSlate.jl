@@ -103,7 +103,8 @@ export_app(nb, dir; appdefaults = app_defaults(theme = "midnight", pagewidth = 1
 ```
 
 These are defaults, not enforcement. A visitor who has chosen keeps their choice — the app's settings
-popover offers the same reader-facing subset, and `localStorage` still wins.
+popover offers the same reader-facing subset (theme, page width, and the
+[chart renderer](configuration.md#Chart-renderer)), and `localStorage` still wins.
 
 ## Workbook mode
 
