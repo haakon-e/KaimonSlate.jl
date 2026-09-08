@@ -58,6 +58,7 @@ makedocs(;
         "Getting Started" => "getting-started.md",
         "Guide" => [
             "Notebook Basics" => "notebook-basics.md",
+            "Project Files" => "project-files.md",
             "Cell Tags & Caching" => "cell-tags.md",
             "Memoization & Caching" => "memoization.md",
             "Command Palette & Help" => "palette-and-help.md",
@@ -66,12 +67,14 @@ makedocs(;
             "The Dependency Graph" => "dag.md",
             "Live Updates" => "live-updates.md",
             "Widgets & @bind" => "widgets.md",
+            "Offline Interactivity" => "replay.md",
             "Charts" => "visualization.md",
             "Tables" => "tables.md",
             "Animation" => "animation.md",
             "Front-end Extensions" => "frontend-extensions.md",
             "Extensions Gallery" => "extension-gallery.md",
             "Writing an Extension" => "extensions.md",
+            "Listing an Extension" => "listing-an-extension.md",
             "Documents & Citations" => "documents.md",
             "Slides & Present" => "slides.md",
             "The AI Agent" => "agent.md",
@@ -80,13 +83,13 @@ makedocs(;
             "App Mode" => "app-mode.md",
             "Publishing" => "publishing.md",
             "Packages" => "packages.md",
+            "Editing Project Source" => "hot-reload.md",
             "Configuration" => "configuration.md",
             "Remotes" => "remotes.md",
             "Regions" => "regions.md",
         ],
         "API Reference" => "api.md",
     ],
-    warnonly = [:missing_docs, :docs_block, :cross_references],
 )
 
 # Step 2: Fix &amp; in markdown headings before VitePress sees them.

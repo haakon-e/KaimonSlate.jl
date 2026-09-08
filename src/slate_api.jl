@@ -329,7 +329,8 @@ datafile === nothing ? md"Upload a file to begin." : CSV.read(datafile.path, Dat
     or a field either — the value is an ordinary array, and the renderer finds it wherever you put it.
 
     REQUIREMENTS: the control must have a finite domain, and `expr` must return a numeric array of the
-    same shape for every value. Both are checked as you write the cell, not at export.
+    same shape for every value. The domain is checked as you write the cell; the shape is checked at
+    export, when the sweep runs.
 
     Every control whose domain can be enumerated qualifies, which is more of them than it sounds:
 
@@ -388,8 +389,9 @@ SlateApiEntry("playhead", "Widgets",
         """A CANCELLABLE sleep for use inside `@onclick`/`@onchange` bodies — a new click or `cancel`
         stops the run at its next `pause`. `pause(0.1)`."""),
     SlateApiEntry("cancel", "Live", "Cooperatively stop a running `@onclick` handler.",
-        ["stop", "abort", "interrupt", "kill"], "cancel(:name)",
-        """Cooperatively stop a running `@onclick` handler (it stops at its next `pause`). `cancel(:level)`."""),
+        ["stop", "abort", "interrupt", "kill"], "cancel(:control)",
+        """Cooperatively stop a running `@onclick` handler (it stops at its next `pause`). Names the
+        CONTROL whose handler is running, not the reactive it writes: for `@onclick go`, `cancel(:go)`."""),
     SlateApiEntry("Cancelled", "Live",
         "The exception a cancelled handler unwinds with — lets a `catch` tell a stop from a failure.",
         ["cancel", "stop", "exception", "error", "catch", "interrupt"], "e isa Cancelled",

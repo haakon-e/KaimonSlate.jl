@@ -5248,7 +5248,8 @@ end
 Serialize the notebook to GitHub-flavored Markdown for copy-paste (Discourse / Slack / GitHub /
 Obsidian / docs). Prose rides verbatim; `[@cite]` and `[@fig:label]` render to their in-text form
 (per the notebook's bibstyle) with a trailing References section; code cells become fenced ```julia
-blocks; text outputs are fenced; figures / frozen charts embed as `![Figure N](data:image/…;base64,…)`;
+blocks; text outputs are fenced; figures / frozen charts embed as a markdown image whose source is a
+base64 `data:` URI;
 tables become GFM tables. Data-URI images are self-contained but not every host renders them (GitHub
 strips them) — for those, upload the standalone `.jl` (+ a PNG/SVG) alongside.
 """
