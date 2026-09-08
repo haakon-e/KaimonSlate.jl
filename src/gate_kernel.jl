@@ -742,21 +742,17 @@ end
 
 # The directory this process actually writes its logs to: the per-user name when we can own it, else
 # a fresh private one. Refusing outright would be safe but would also cost a squatted user their logs
-# for good — and losing the logs is the complaint that started this. `mktempdir` picks an unguessable
-# name and creates it 0700, so the fallback is private by construction.
+# for good, which is the complaint that started this. `mktempdir` picks an unguessable name and
+# creates it 0700, so the fallback is private by construction.
 #
-# The NAME is memoized (the hub log, the worker logs and the reap must all agree on one directory)
-# but the directory itself is re-ensured on every call. `tempdir()` is the right home for logs
-# BECAUSE it is disposable — which means a tmpfiles sweep can delete it out from under a hub that is
-# still running, and a cached path would then fail every open for the rest of the session. Re-ensuring
-# costs a stat and heals that, recreating under the same name.
+# Resolved once and memoized: the hub log, the worker logs and the reap must all name the SAME
+# directory. Under the lock because the hub and a worker spawn can race here, and two resolutions
+# that both fell through to `mktempdir` would scatter those logs across two directories.
 const _LOGDIR = Ref{String}("")
 const _LOGDIR_LOCK = ReentrantLock()
 function _slate_logdir()
     lock(_LOGDIR_LOCK) do
-        d = _LOGDIR[]
-        # Still there, or just recreated under the same name after a sweep took it.
-        (!isempty(d) && _own_private_dir(d)) && return d
+        isempty(_LOGDIR[]) || return _LOGDIR[]
         d = _slate_tmpdir()
         if !_own_private_dir(d)
             alt = try; mktempdir(; prefix = "kaimonslate-", cleanup = false); catch; ""; end

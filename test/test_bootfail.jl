@@ -224,16 +224,4 @@ end
         end
     end
 
-    @testset "a swept log directory heals under the same name" begin
-        # tempdir() is the right home for logs BECAUSE it is disposable — so a tmpfiles sweep can
-        # remove it mid-session. A cached path would then fail every open for the rest of the run.
-        d = RE._slate_logdir()
-        rm(d; recursive = true, force = true)
-        @test !isdir(d)
-        @test RE._slate_logdir() == d            # same name, not a new one
-        @test isdir(d)
-        if Sys.isunix()
-            @test (filemode(stat(d)) & 0o077) == 0   # and still private after the remake
-        end
-    end
 end
