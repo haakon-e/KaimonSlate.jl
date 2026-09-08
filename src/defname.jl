@@ -56,7 +56,11 @@ function _collect_defs!(d::Dict{String,UInt64}, ex)
         _collect_defs!(d, ex.args[3])                       # module Name <block>
     else
         nm = _def_name(ex)
-        nm === nothing || (d[nm] = hash(_strip_lines(ex)))
+        # FOLD, don't overwrite: several methods of one function (or a type plus its constructors)
+        # share a name, and assigning here would keep only the last one — an edit to any earlier
+        # method would then hash identically, so it would raise no hot-reload banner AND leave the
+        # memo key unchanged, restoring a cached result computed from the old code.
+        nm === nothing || (d[nm] = hash(_strip_lines(ex), get(d, nm, UInt64(0))))
     end
     return d
 end
