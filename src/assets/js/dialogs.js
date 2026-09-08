@@ -432,8 +432,10 @@ async function _runPdfExport() {
   localStorage.setItem('slate_pdfnotes', notes ? '1' : '0');
   showLoading('Rendering PDF with Typst…');
   try {
+    // A deck hides source by default server-side, so `code` alone cannot turn it back on: send an
+    // explicit source=1 whenever the picker is not `hidden`.
     const qs = '?theme=' + theme + '&charttheme=' + charttheme + (override ? '&override=1' : '') + '&style=' + style + '&columns=' + columns + '&body=' + body + '&code=' + code + (params ? '&params=1' : '')
-      + (slides ? '&layout=slides' : '') + (notes ? '&notes=1' : '') + _outputsQS();
+      + (slides ? '&layout=slides' + (code !== 'hidden' ? '&source=1' : '') : '') + (notes ? '&notes=1' : '') + _outputsQS();
     const r = await fetch(_apipath('/api/export.pdf') + qs);
     if (!r.ok) { await alertDark('PDF export failed:\n' + (await r.text())); return; }
     _saveBlob(await r.blob(), '.pdf');
