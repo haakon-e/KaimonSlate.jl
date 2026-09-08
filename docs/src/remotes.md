@@ -178,5 +178,5 @@ Defining named regions and assigning them to a notebook has its own tools — `s
 
 - [Regions](regions.md) — run *part* of one notebook on a remote kernel while the rest stays local.
 - [Memoization & Caching](memoization.md) — the durable cache that `sync_memo` moves.
-- [Configuration](configuration.md) — hub port, kernel selection, environment variables.
+- [Running the Hub](hub.md) — hub port, kernel selection, environment variables.
 - [Packages](packages.md) — a notebook's per-project environment (what `preload` replicates).

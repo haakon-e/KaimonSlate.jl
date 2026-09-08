@@ -68,11 +68,11 @@ agent at specific cells without it reading everything.
 Today the in-browser agent runs on **Claude** (via the `claude` CLI) or a **locally-configured
 model** (Ollama); support for more agents through **ACP** (the Agent Client Protocol) is planned.
 
-In **⚙ Settings**:
+In **☰ → ⚙ Settings**:
 
 - **Agent model** — Sonnet (default), Opus, Haiku, any locally-served model found on your **Ollama**
   or **vmlx** server (both listed automatically), or **Custom…**, which sends an exact model id
-  straight through (`ollama:llama3.1`, say). See [Configuration](configuration.md).
+  straight through (`ollama:llama3.1`, say). See [Running the Hub](hub.md#Environment-variables).
 - **Agent permissions** — `lab` (default: slate/ex/edit tools), `auto` (model
   self-governs), `default` (edits only), or `bypass` (no checks; trusted only).
 

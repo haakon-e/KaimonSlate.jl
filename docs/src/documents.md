@@ -76,7 +76,7 @@ references card.
 ## Citation style
 
 Set the citation style per notebook in **Settings → Citation style** (persisted as `bibstyle` in
-[Settings, under This notebook](configuration.md#This-notebook)):
+[Settings, under This notebook](settings.md#This-notebook)):
 
 `ieee` · `apa` · `chicago-author-date` · `chicago-notes` · `mla` · `nature` · `vancouver` ·
 `harvard-cite-them-right`

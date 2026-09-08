@@ -132,7 +132,7 @@ running cells one at a time so you can watch:
 
 Click **✨** on a cell to scope a turn to that cell and its dependency cone, or type **@**
 in the chat to reference a specific cell by id. Pick the model and permission preset in
-**⚙ Settings**. See [The AI Agent](agent.md).
+**☰ → ⚙ Settings**. See [The AI Agent](agent.md).
 
 ## Export
 

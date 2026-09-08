@@ -10,7 +10,7 @@ This is what makes a long-lived notebook feel warm: edit one cell and only its d
 
 !!! note "Gate workers only"
     The durable store lives in the notebook's **gate worker**. A notebook running
-    [in-process](configuration.md#Kernel-selection) (no worker) has no durable cache — its results
+    [in-process](hub.md#Kernel-selection) (no worker) has no durable cache — its results
     live only as long as the session.
 
 ## The durable store

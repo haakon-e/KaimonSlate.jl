@@ -219,7 +219,7 @@ However you start it, `slate` shows a terminal dashboard:
 ## Embedding (programmatic)
 
 To drive the hub from your own script instead of the app, the REPL API is still available —
-`serve_notebook` / `start_server` / `stop_server` — see [Configuration](configuration.md#serving)
+`serve_notebook` / `start_server` / `stop_server` — see [Configuration](hub.md#serving)
 and the [API Reference](api.md).
 
 !!! tip "In-process vs. gate worker"

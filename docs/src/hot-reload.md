@@ -79,7 +79,7 @@ changing any cache key.
 
 ## Turning it off
 
-**⚙ Settings → This notebook → Execution → Hot-reload /src edits**. It takes effect immediately, and
+**☰ → ⚙ Settings → This notebook → Execution → Hot-reload /src edits**. It takes effect immediately, and
 persists in the notebook's config footer.
 
 There is nothing to set up otherwise. It is on whenever the notebook runs on a worker (not an

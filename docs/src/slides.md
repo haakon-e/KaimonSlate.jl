@@ -57,7 +57,7 @@ Remember to drag the slider here.
 
 Set the **slide level** (the heading depth that starts a slide, 1 through 6, default 2 for `##`),
 the **transition**, and the **aspect ratio** (16:9 or 4:3) per notebook in
-**⚙ Settings → This notebook** (see [Configuration](configuration.md#This-notebook)). These pin
+**☰ → ⚙ Settings → This notebook** (see [Configuration](settings.md#This-notebook)). These pin
 to the notebook and travel in its `.jl`.
 
 The live deck follows the editor theme. A PDF deck takes its theme from the export dialog.

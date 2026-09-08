@@ -129,7 +129,7 @@ echart(:line, x, y; renderer = :svg)
 ```
 
 This is a preference, not a guarantee. A reader can set their own in
-[Settings](configuration.md#Chart-renderer) and that wins, because whether the canvas path works
+[Settings](settings.md#Chart-renderer) and that wins, because whether the canvas path works
 depends on the browser doing the viewing, and the person hitting a blank chart is usually not the
 author. On a static export the equivalent is `?renderer=svg` on the URL.
 

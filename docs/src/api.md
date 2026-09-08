@@ -38,7 +38,7 @@ KaimonSlate.register_extension
 
 ## Configuration accessors
 
-The persisted settings behind [Configuration](configuration.md), readable and settable from Julia.
+The persisted settings behind [Running the Hub](hub.md), readable and settable from Julia.
 
 ```@autodocs
 Modules = [KaimonSlate]
@@ -119,7 +119,7 @@ Modules = [KaimonSlate.EffectStore]
 ## State homes
 
 Where Slate keeps its config, data and cache, as described under
-[Configuration](configuration.md#Where-Slate-keeps-its-state).
+[Configuration](hub.md#Where-Slate-keeps-its-state).
 
 ```@autodocs
 Modules = [KaimonSlate.SlateHome]
