@@ -4180,6 +4180,25 @@ function _doc_meta(nb::LiveNotebook)
     return (; title = String(title), description = String(desc))
 end
 
+# The build options recorded on a manifest entry. This record IS where a doc's publish settings live —
+# there is no copy in the ledger — and Sync rebuilds from it, so every option the page depends on has to
+# be here: one that is honoured at publish but left unrecorded silently reverts on the next Sync.
+#
+# `slate` is the version that BUILT the page, not an option. A doc is out of date when its source is
+# newer than its build OR when the generator has moved on — and only the source half was ever visible,
+# so a Slate upgrade left every page looking current while `run.jl`, the page chrome and the export
+# would all come out different.
+_build_record(bundle::Bool, history::Bool, bkw) =
+    Dict{String,Any}("slate" => (try; string(pkgversion(@__MODULE__)); catch; ""; end),
+                     "bundle" => bundle, "history" => history,
+                     "theme" => String(get(bkw, :theme, "dark")),
+                     "charttheme" => String(get(bkw, :charttheme, "")),
+                     "override" => get(bkw, :override, false) === true,
+                     "outputs" => String(get(bkw, :outputs, "all")),
+                     "renderer" => String(get(bkw, :renderer, "")),
+                     "width" => Int(get(bkw, :width, 900)),
+                     "source" => get(bkw, :include_source, true) === true)
+
 # Build ONE document's directory under `docdir` (index.html + og-image + optional runnable bundle),
 # returning its manifest entry. `base_url` is the doc's eventual URL (…/<slug>/) so run.jl's bundle
 # fetch is absolute. `date` seeds the entry (a re-publish keeps the original via `_upsert_doc!`).
@@ -4233,13 +4252,7 @@ function _build_doc!(docdir::AbstractString, nb::LiveNotebook; slug::AbstractStr
     # last published with, so a re-sync reproduces it faithfully instead of shipping the frozen artifact.
     entry["id"] = notebook_docid(nb).docId      # the notebook's stable file-carried identity — Sync matches on this
     entry["source"] = abspath(nb.path)
-    bkw = (; kwargs...)
-    entry["build"] = Dict{String,Any}("bundle" => bundle, "history" => history,
-                                      "theme" => String(get(bkw, :theme, "dark")),
-                                      "charttheme" => String(get(bkw, :charttheme, "")),
-                                      "override" => get(bkw, :override, false) === true,
-                                      "outputs" => String(get(bkw, :outputs, "all")),
-                                      "source" => get(bkw, :include_source, true) === true)
+    entry["build"] = _build_record(bundle, history, (; kwargs...))
     return entry
 end
 
@@ -4489,6 +4502,9 @@ function _assemble_site!(dir::AbstractString, nb::LiveNotebook; site_url::Abstra
         end
         _write_page_assets!(dir, nb; imports = _site_import_mode(kwargs))   # referenced assets → page-local siblings (home page IS at `dir`)
         hsink = Dict{String,Vector{UInt8}}()   # …plus the siblings only the export can produce
+        # A front page is a site's index, not something a visitor runs, so it deliberately carries NO
+        # runnable bundle however the option is set — `runnable=false` here is the decision, not an
+        # oversight. Its `build` record below says `bundle=false` to match what was actually built.
         hhtml = export_html(nb; runnable = false, og_image = hogpath, inline_assets = false,
                             asset_sink = hsink, og_url = su, og_type = "website", kwargs...)  # carries `docindex`
         _write_sibling_assets!(dir, hsink)
@@ -4506,11 +4522,9 @@ function _assemble_site!(dir::AbstractString, nb::LiveNotebook; site_url::Abstra
             # its own site, and Stage silently skipped it — so front-page edits never shipped.
             "id" => notebook_docid(nb).docId,
             "source" => abspath(nb.path),
-            "build" => Dict{String,Any}("bundle" => bundle,
-                                        "history" => get(hkw, :history, false) === true,
-                                        "theme" => String(get(hkw, :theme, "dark")),
-                                        "outputs" => String(get(hkw, :outputs, "all")),
-                                        "source" => get(hkw, :include_source, true) === true))
+            # `bundle=false`, not the caller's `bundle`: the front page is built without a runnable
+            # bundle (see above), and a record claiming otherwise would have Sync rebuild it as runnable.
+            "build" => _build_record(false, get(hkw, :history, false) === true, hkw))
         commit_title = "front page — $(isempty(strip(fm.title)) ? nb.id : strip(fm.title))"
         docUrl = su
     else
