@@ -130,14 +130,22 @@ button, a.btnlink { background:var(--bg3); color:var(--text); border:1px solid v
 button:hover, a.btnlink:hover { border-color:var(--accent); color:var(--accent); }
 .page { max-width:var(--page-max, 980px); margin:0 auto; padding:var(--page-pad) var(--page-pad) 160px; transition:margin-right .18s ease, margin-left .18s ease; }
 body.fullwidth .page { max-width:none; }   /* Full page width overrides the column-width slider */
-/* When the agent chat is open, slide the notebook column left of the panel so cells
-   and the chat never overlap (the panel is a fixed 380px drawer on the right). */
-body.agent-open .page { margin-right:392px; }
+/* An open dock reserves its width so cells and the drawer never overlap. Take the LARGER of that
+   reservation and the margin the column would have had anyway: `.page` is `margin:0 auto`, so
+   pinning one side to a length leaves the opposite `auto` to swallow every remaining pixel, which
+   dragged the column hard against the dock. On a wide monitor there is slack to swallow and the
+   column visibly left the centre; on a narrow one there was none, which is why this never showed.
+   Now it holds still until the dock would actually reach it, then gives way. */
+body.agent-open .page { margin-right:max(392px, calc((100% - var(--page-max, 980px)) / 2)); }
 @media (max-width:900px) { body.agent-open .page { margin-right:0; } }
 /* The TOC drawer mirrors the agent panel but on the LEFT: shift the notebook column right so the
    outline and the cells never overlap (fixed 300px drawer). Falls back to overlay when narrow. */
-body.toc-open .page { margin-left:312px; }
+body.toc-open .page { margin-left:max(312px, calc((100% - var(--page-max, 980px)) / 2)); }
 @media (max-width:900px) { body.toc-open .page { margin-left:0; } }
+/* Full width has no slack by definition — the column always runs up to the dock — and `--page-max`
+   is not its width there, so the centring term above would be meaningless. Reserve outright. */
+body.fullwidth.agent-open .page { margin-right:392px; }
+body.fullwidth.toc-open .page { margin-left:312px; }
 /* Banner while a self-contained notebook's env reconstructs in the background; the cells below
    show the embedded frozen render until live cells are pushed in. */
 .hydbanner { position:sticky; top:var(--topbar-h,49px); z-index:9; display:flex; align-items:center; gap:10px;
