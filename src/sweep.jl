@@ -3647,6 +3647,7 @@ function _live_script(io, r::ShardedResult)
       // The last state the card knows about, seeded from the render so the buttons can speak
       // accurately before the first poll lands.
       var last = { done: $(r.plan.shards_done), total: $(r.plan.shards_total),
+                   missing: $(r.plan.shards_missing), host: "$(_esc(target_host(r.target)))",
                    state: "$(display_state(r.plan, BatchSweep.is_armed(store_root(r.target), r.run)))" };
 
       // "~3h12m left" is a number you then have to add to the clock. "done ~17:22" is one you can
@@ -3812,13 +3813,24 @@ function _live_script(io, r::ShardedResult)
         return window.confirmDark ? window.confirmDark(msg, "Reset", "danger")
                                   : Promise.resolve(window.confirm(msg));
       }
+      // Submit is the control that SPENDS: queue time, an allocation, on a shared machine someone
+      // else is waiting for. The button says how much before you press it, but a keybinding does not
+      // show you a label — so the count and the destination are asked here, where both paths meet.
+      function confirmSubmit(){
+        var n = last.missing || 0;
+        var msg = "Submit " + n + " unit" + (n === 1 ? "" : "s") +
+                  (last.host ? " to " + last.host : " locally") + "?";
+        return window.confirmDark ? window.confirmDark(msg, "Submit")
+                                  : Promise.resolve(window.confirm(msg));
+      }
       function runAction(act, btn){
         if (btn.disabled) return;
         var was = btn.textContent;
         // Disabled for the confirmation too, not just the call: an impatient second click would
         // otherwise stack a second dialog on the first.
         btn.disabled = true;
-        (act === "reset" ? confirmReset() : Promise.resolve(true)).then(function(ok){
+        (act === "reset" ? confirmReset() :
+         act === "submit" ? confirmSubmit() : Promise.resolve(true)).then(function(ok){
           if (!ok) { btn.disabled = false; return; }
           btn.textContent = "…";
           // Asking this card to start work IS watching it. Without this, a sweep submitted from a

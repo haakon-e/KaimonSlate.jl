@@ -1631,6 +1631,29 @@ end
             @test occursin("data-sweep", card(Sweep.refresh!(bad)))
             # The dataset renders too — it is built during the card's own render.
             @test !isempty(sprint((io, v) -> show(io, MIME"text/plain"(), v), r.dataset))
+
+            # The card's behaviour is JavaScript built inside a Julia string, so nothing that checks
+            # this repo's .js files looks at it and a stray brace or quote would ship as a card that
+            # renders and then does nothing. Parse what a real render actually emitted.
+            node = Sys.which("node")
+            if node === nothing
+                @info "node not found — skipping the card-script parse"
+                @test true
+            else
+                html = card(r)
+                i, j = findlast("<script>", html), findlast("</script>", html)
+                @test i !== nothing && j !== nothing
+                js = html[last(i)+1:first(j)-1]
+                mktempdir() do d
+                    p = joinpath(d, "card.js"); write(p, js)
+                    io = IOBuffer()
+                    ok = success(pipeline(`$node --check $p`; stdout = io, stderr = io))
+                    ok || print(String(take!(io)))
+                    @test ok
+                end
+                # The controls that spend or destroy ask first, and say how much.
+                @test occursin("confirmSubmit", js) && occursin("confirmReset", js)
+            end
         end
 
         # …and when the dataset cannot be assembled at all. Building it is the one part of a card

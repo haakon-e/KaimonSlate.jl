@@ -301,6 +301,38 @@ R({ id: 'view.extensions', label: 'Extensions…', group: 'Panels', ctx: ['comma
 R({ id: 'view.sessions', label: 'Sign in to a host… (cluster / region authentication)',
     group: 'Panels', ctx: ['command'],
     available: _has('openSessions'), run: () => _fn('openSessions') });
+
+// ── Sweeps ────────────────────────────────────────────────────────────────────
+// A batch sweep's controls live on its card, and these drive that card's own button rather than
+// calling the action channel directly. The confirmations, the disable-while-in-flight and the label
+// restore are all attached to the button; a second route to the same action would have to reproduce
+// every one of them, and would drift the moment one changed.
+//
+// The card is found through the SELECTED cell, which is also what decides WHICH sweep — a notebook
+// can hold several, and the selection is the only thing that disambiguates them.
+//
+// Unbound by default, deliberately. Submit spends queue time on a machine other people share and
+// reset destroys finished work, so neither should arrive by keystroke unasked — least of all in
+// command mode, where a letter you believed you were typing into the editor would do it. Each gets a
+// row in Settings → Keyboard for anyone who wants to bind one.
+const _sweepBtn = act => {
+  const id = window.slateSelectedId && window.slateSelectedId();
+  const cell = id && document.getElementById('cell-' + id);
+  return cell ? cell.querySelector('[data-sweep] [data-sw-do="' + act + '"]') : null;
+};
+// `available` tracks the card's own controls, so a command is offered exactly when its button is:
+// Submit only on a sweep that has not been armed, Retry only when something failed.
+const _sweepCmd = (act, label) => R({
+  id: 'sweep.' + act, label, group: 'Sweeps', ctx: ['command'], keys: [],
+  available: () => !!_sweepBtn(act),
+  run: _onSel(() => { const b = _sweepBtn(act); if (!b || b.disabled) return false; b.click(); }),
+});
+_sweepCmd('submit', 'Submit the selected sweep');
+_sweepCmd('cancel', 'Cancel the selected sweep');
+_sweepCmd('resume', 'Resume the selected sweep');
+_sweepCmd('retry',  'Retry the selected sweep’s failed units');
+_sweepCmd('logs',   'Show the selected sweep’s job output');
+_sweepCmd('reset',  'Reset the selected sweep (discards its results)');
 // `appSettingsToggle` only exists in app mode, and it is checked FIRST there for a reason: app mode
 // leaves `openSettings` defined but replaced with a no-op (appmode.js `disableAuthoringOpeners`), so
 // preferring it would silently do nothing. The app's display popover is what Settings means to a reader.
