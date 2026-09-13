@@ -427,13 +427,19 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
     const _eq = srcEq;
     // The server's per-cell content hash is the authoritative "did THIS cell change" signal — immune to
     // browser-side srcMap drift. Fall back to a string compare only if an older state carries no hash.
-    const _serverMoved = (c.hash != null && _prevHash != null) ? c.hash !== _prevHash : !_eq(c.source, _prevSrc);
-    if (window.editors[c.id] && _serverMoved) {
-      const _mine = window.edText(c.id);
-      if (_eq(_mine, _prevSrc)) window.edSetText(c.id, c.source);                       // no local edits → fast-forward to the new source
-      else if (!_eq(_mine, c.source) && window.slateLiveConflict) window.slateLiveConflict(c.id, _mine, c.source);   // both changed → reconcile modal
-    } else if (!window.editors[c.id] && _serverMoved) {
-      const ph = el.querySelector('.cm-placeholder'); if (ph) ph.textContent = c.source || '';   // not yet hydrated → keep placeholder current
+    // The verdict itself is `slateReconcileVerdict` (cellops.js), kept pure and out of this effect so
+    // it can be unit-tested — see test/js/reconcile_verdict.mjs.
+    const _hasEd = !!window.editors[c.id];
+    const _mine = _hasEd ? window.edText(c.id) : null;
+    switch (window.slateReconcileVerdict({ prevSrc: _prevSrc, prevHash: _prevHash,
+                                           source: c.source, hash: c.hash,
+                                           mine: _mine, hasEditor: _hasEd, eq: _eq })) {
+      case 'forward':  window.edSetText(c.id, c.source); break;                          // no local edits → adopt it
+      case 'conflict': window.slateLiveConflict && window.slateLiveConflict(c.id, _mine, c.source); break;
+      case 'placeholder': {
+        const ph = el.querySelector('.cm-placeholder'); if (ph) ph.textContent = c.source || '';   // not yet hydrated
+        break;
+      }
     }
     const badge = el.querySelector('.badge');     // header renders c.state; reflect the live state
     if (badge && badge.textContent !== state) badge.textContent = state;
