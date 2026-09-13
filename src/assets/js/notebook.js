@@ -372,6 +372,35 @@ function EChartHost({ cell }) {
   }</div>`;
 }
 
+// Rebuild a control host without taking the control the user is working in away from them.
+//
+// A rebuild replaces the host's innerHTML wholesale, which destroys the focused node. Focus then falls
+// to <body>, and command mode binds bare letters — so the REST of what someone types gets read as
+// commands. Typing a filter into a `@bind TextField` converted the cell to a web cell on the `w`,
+// because the first keystroke rebuilt the row out from under the caret.
+//
+// It rebuilds on a genuine structural change, and the option list of a `Select` fed by another bind IS
+// one, so this fires on every keystroke for exactly the notebooks that wire controls together. The
+// control is found again by `data-name` (widgets carry it) and the caret is put back where it was.
+function _keepFocus(host, rebuild) {
+  const a = document.activeElement;
+  const held = a && host.contains(a) && a !== host
+    ? { name: a.getAttribute && a.getAttribute('data-name'),
+        // Only text-ish inputs expose a selection; reading it elsewhere throws.
+        start: (() => { try { return a.selectionStart; } catch (_) { return null; } })(),
+        end: (() => { try { return a.selectionEnd; } catch (_) { return null; } })() }
+    : null;
+  rebuild();
+  if (!held || !held.name) return;
+  let next = null;
+  try { next = host.querySelector('[data-name="' + (window.CSS && CSS.escape ? CSS.escape(held.name) : held.name) + '"]'); } catch (_) {}
+  if (!next) return;
+  try {
+    next.focus({ preventScroll: true });
+    if (held.start != null && next.setSelectionRange) next.setSelectionRange(held.start, held.end);
+  } catch (_) {}
+}
+
 function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed }) {
   const c = cell;
   const ref = useRef(null);
@@ -477,12 +506,12 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
       last.current.bindKey = bindKey;
       const host = el.querySelector('.binds');
       // Let any custom widgets clean up before the swap orphans their nodes (mirrors the .ichart dispose above).
-      if (host) { window.teardownCustomWidgets(host); host.innerHTML = window.bindsInner(c); rebuilt = true; }
+      if (host) { _keepFocus(host, () => { window.teardownCustomWidgets(host); host.innerHTML = window.bindsInner(c); }); rebuilt = true; }
     }
     if (ctrlKey !== last.current.ctrlKey) {
       last.current.ctrlKey = ctrlKey;
       const host = el.querySelector('.controls');
-      if (host) { window.teardownCustomWidgets(host); host.innerHTML = window.controlStripInner(c); rebuilt = true; }
+      if (host) { _keepFocus(host, () => { window.teardownCustomWidgets(host); host.innerHTML = window.controlStripInner(c); }); rebuilt = true; }
     }
     if (rebuilt) window.mountControls(c);             // wire the freshly-built controls
 
