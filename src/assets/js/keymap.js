@@ -409,8 +409,24 @@
     el.textContent = format(_pending) + ' …';
   }
 
-  const _isField = t => !!(t && t.closest && (t.closest('.cm-editor') ||
-    /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') || t.isContentEditable));
+  // Does the keystroke belong to a control rather than to the notebook?
+  //
+  // The tag name alone cannot answer this. A `@bind` widget is not always an `<input>`: MultiSelect is
+  // a focusable `div[role=listbox]`, and a widget contributed by a package can render anything at all.
+  // Testing only INPUT/TEXTAREA/SELECT meant typing in one of those ran command-mode keys instead, so
+  // `w` in a MultiSelect converted the cell to a web cell.
+  //
+  // So the question is asked of the REGION. Everything inside a cell's bind area, a surfaced control
+  // strip, a custom widget or an editor owns its own keys. Deliberately NOT a test for focusability:
+  // an interactive chart is given `tabindex="-1"` and focused on click (settings.js), and command-mode
+  // keys have to keep working after you click a chart.
+  const _FIELD_TAGS = /^(INPUT|TEXTAREA|SELECT|BUTTON)$/;
+  const _CONTROL_REGION = '.cm-editor, .binds, .controls, .widget, .control, .customwidget';
+  function _isField(t) {
+    if (!t || !t.closest) return false;
+    if (_FIELD_TAGS.test(t.tagName || '') || t.isContentEditable) return true;
+    return !!t.closest(_CONTROL_REGION);
+  }
   const _inEditor = t => !!(t && t.closest && t.closest('.cm-editor'));
   // Any open dialog owns the keyboard: its own handlers drive it, and a command-mode key firing
   // behind it would act on a cell the reader can't see. Global chords still work — ⌘K has to be able

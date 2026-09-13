@@ -626,7 +626,8 @@ end
         for script in ("agent_md.mjs", "click_background.mjs", "worker_tabs.mjs", "vim_escape.mjs",
                        "editor_reconfigure.mjs", "esc_html.mjs", "keymap_resolve.mjs",
                        "bytes_fmt.mjs", "dag_spline.mjs", "rebaseline_all.mjs",
-                       "rebaseline_callsites.mjs", "reconcile_verdict.mjs")
+                       "rebaseline_callsites.mjs", "reconcile_verdict.mjs",
+                       "keymap_field_target.mjs")
             io = IOBuffer()
             ok = success(pipeline(`$node $(joinpath(@__DIR__, "js", script))`; stdout = io, stderr = io))
             ok || print(String(take!(io)))
