@@ -621,7 +621,13 @@
     const dot = ctx.matchBefore(/\.$/);
     const bs = ctx.matchBefore(/\\[A-Za-z\d^_]*$/);             // LaTeX/emoji: \pi → π
     if (!ctx.explicit && !word && !dot && !bs) return null;
-    if (word && JL_KEYWORDS.has(word.text)) return null;        // finished keyword → no popup
+    // A finished keyword is a token, not a prefix — `end` should not open a popup. But AFTER A DOT a
+  // keyword is not a keyword, it is the start of a field name, and suppressing there killed
+  // completion for every property that begins with one: `.do`→`done`, `.in`→`index`,
+  // `.type`→`types`, `.local`, `.const`. Julia completes all of these correctly; the popup just
+  // never asked.
+  const afterDot = ctx.matchBefore(/\.[A-Za-z_][\w!]*$/);
+  if (word && !afterDot && JL_KEYWORDS.has(word.text)) return null;
     const node = syntaxTree(ctx.state).resolveInner(ctx.pos, -1);
     if (!ctx.explicit && /Comment|String|Char/.test(node.name)) return null;
     const code = ctx.state.doc.toString();
