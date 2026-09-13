@@ -21,8 +21,8 @@ const MS = RE.MemoStore
 @testset "dataset" begin
 
     @testset "an array is addressable with no index beyond its dims" begin
-        # The strongest case: the `raw` layout is a fixed header plus elements in memory order, so
-        # ANY sub-range is arithmetic. No chunking, no packages, no scan to find a row.
+        # The strongest case: the `raw` layout is a header plus elements in memory order, so ANY
+        # sub-range is arithmetic. No chunking, no packages, no scan to find a row.
         mktempdir() do root
             v = collect(reshape(Float32(1):Float32(6000), 100, 60))
             idx, n = ST.write_dataset!(root, v)
@@ -41,6 +41,28 @@ const MS = RE.MemoStore
             @test ST.dataset_elements(root, idx, 1:1) == [v[1]]
             @test ST.dataset_elements(root, idx, 6000:6000) == [v[6000]]
             @test_throws Exception ST.array_range(idx, 5999:6001)   # past the end is a bounds error
+        end
+    end
+
+    @testset "an array of rows, whose element type names itself at length" begin
+        # What a unit returning several rows of mixed types actually produces. It is an isbits
+        # array, so it takes the array path — and its element type names itself in more characters
+        # than the header used to have room for, which made the unit unstorable. The index carries
+        # where the elements start rather than assuming, since that is now type-dependent.
+        mktempdir() do root
+            T = @NamedTuple{slice::Int64, k_re::Float64, k_im::Float64, converged::Bool}
+            v = T[(; slice = i, k_re = 1.0i, k_im = 2.0i, converged = isodd(i)) for i in 1:200]
+            @test ST.dataset_kind(v) === :array
+            idx, n = ST.write_dataset!(root, v)
+            off = idx["offset"]
+            @test off > 64 && off % 64 == 0
+            @test n == off + 200 * sizeof(T)
+            @test idx["elsize"] == sizeof(T)
+
+            _, o, nb, cnt = ST.array_range(idx, 51:60)
+            @test o == off + 50 * sizeof(T) && nb == 10 * sizeof(T) && cnt == 10
+            @test ST.dataset_elements(root, idx, 51:60) == v[51:60]
+            @test ST.dataset_elements(root, idx, 200:200) == [v[200]]
         end
     end
 

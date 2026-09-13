@@ -385,12 +385,14 @@ function write_dataset!(root::AbstractString, value; chunk_bytes::Integer = DATA
     kind === :group && return _write_adopted!(root, value; chunk_bytes)
 
     if kind === :array
-        # The `raw` codec is already an addressable layout: a fixed 64-byte header, then the
-        # elements in memory order. Nothing to chunk — every sub-range is computable.
+        # The `raw` codec is already an addressable layout: a header, then the elements in memory
+        # order. Nothing to chunk — every sub-range is computable. The header's length depends on
+        # how long the element type names itself, so the index records where the elements start
+        # rather than assuming.
         h, n = MemoStore.put_blob(io -> _codec_encode(io, "raw", value), root)
         idx = Dict{String,Any}(
             "kind" => "array", "codec" => "raw", "blob" => h, "bytes" => Int(n),
-            "offset" => 64, "dims" => collect(Int, size(value)),
+            "offset" => _raw_offset(value), "dims" => collect(Int, size(value)),
             "eltype" => string(eltype(value)), "elsize" => sizeof(eltype(value)),
             "rows" => length(value))
         return (idx, Int(n))

@@ -245,4 +245,39 @@ blobcount(root) = sum(length(fs) for (_, _, fs) in walkdir(joinpath(root, "blobs
             @test _codec_decode("jls", MemoStore.blob_path(root, hj), false) == Dict("k" => [1, 2])
         end
     end
+
+    @testset "raw: an element type whose name is longer than the header" begin
+        # The header used to be a fixed 64 bytes, so a value was unwritable once its element type
+        # NAMED itself in more than what was left — which a NamedTuple of a few fields does easily,
+        # and which is exactly what a sweep unit returning rows produces. It grew to fit, and the
+        # blob says where its own payload starts.
+        mktempdir() do root
+            T = @NamedTuple{slice::Int64, k_re::Float64, k_im::Float64,
+                            seed_re::Float64, seed_im::Float64, converged::Bool}
+            v = T[(; slice = i, k_re = 1.0i, k_im = 2.0i, seed_re = 3.0i, seed_im = 4.0i,
+                     converged = isodd(i)) for i in 1:9]
+            @test ncodeunits(string(T)) > 64                   # the case that could not be written
+            @test _codec_pick(v) == "raw"
+            h, n = MemoStore.put_blob(io -> _codec_encode(io, "raw", v), root)
+            off = _raw_offset(v)
+            @test off % 64 == 0 && off > 64                    # padded, and bigger than v1's fixed size
+            @test n == off + sizeof(v)
+            p = MemoStore.blob_path(root, h)
+            @test _codec_decode("raw", p, false) == v
+            @test _codec_decode("raw", p, true) == v           # and the mmap lands on the same bytes
+
+            # A v1 blob still reads: the store holds entries written before the header could grow.
+            a = collect(1.0:8.0)
+            v1 = IOBuffer()
+            write(v1, _RAW_MAGIC); write(v1, UInt8(1)); write(v1, Int64(length(a)))
+            write(v1, UInt16(ncodeunits("Float64"))); write(v1, "Float64")
+            pad = take!(v1)
+            hv1, _ = MemoStore.put_blob(root) do io
+                write(io, pad)
+                write(io, zeros(UInt8, 64 - length(pad)))
+                write(io, a)
+            end
+            @test _codec_decode("raw", MemoStore.blob_path(root, hv1), false) == a
+        end
+    end
 end
