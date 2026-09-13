@@ -2325,7 +2325,14 @@ Base.getindex(ds::Dataset, ::Colon) = load(ds, 1:length(ds))
 # Columns, not rows. A row consumer wants every column in order, which forfeits both projection and
 # chunk pruning and pays a NamedTuple per row; `Tables.columns` hands over the vectors `load`
 # already built. `DataFrame(ds)` is therefore exactly `DataFrame(ds[:])`.
-let T = try
+#
+# Skipped while PRECOMPILING, which is the package case and the extension's job. Both would
+# otherwise define the same methods on the same `Dataset` — the two are only distinct types when
+# this file is included into a worker — and a method the extension overwrites is an error rather
+# than a warning: "Method overwriting is not permitted during Module precompilation", which takes
+# the whole extension down with it.
+let T = (ccall(:jl_generating_output, Cint, ()) == 1) ? nothing :
+        try
             Base.require(Base.PkgId(Base.UUID("bd369af6-aec1-5ad0-b16a-f7cc5008161c"), "Tables"))
         catch
             nothing
