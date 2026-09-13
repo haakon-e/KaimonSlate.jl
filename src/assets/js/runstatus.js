@@ -154,6 +154,41 @@
     if (bar) bar.remove();
   }
 
+  // Live OUTPUT from a running cell (`cellout:` frames — see capture.jl's streaming watchdog). The
+  // text is already cooked Julia-side, so a progress bar arrives as one settled line that changes
+  // rather than a cascade; all that's left here is turning its colour into spans.
+  //
+  // It goes in a `.outlive` block at the top of the cell's output, and `.haslive` hides the previous
+  // run's output underneath: the streaming text IS this run's output, and showing both at once
+  // leaves the reader unsure which is current. Removed when the real result patches in.
+  window.onCellOutput = function (p) {
+    p = p || {};
+    // Only a cell we believe is RUNNING may show live output. The sampler is stopped by flag rather
+    // than joined, so a frame can be in flight when the cell finishes — and applying that one after
+    // `celldone:` would re-create the block and hide the real result for good.
+    if (!p.cid || !running.has(p.cid)) return;
+    const cell = document.querySelector(`.cell[data-cid="${p.cid}"]`);
+    const host = cell && cell.querySelector(':scope > .output');
+    if (!host) return;
+    reveal();                             // a cell producing output is doing real work — show the chrome
+    let live = host.querySelector(':scope > .outlive');
+    if (!live) {
+      live = document.createElement('div');
+      live.className = 'outlive';
+      host.insertBefore(live, host.firstChild);
+    }
+    const ansi = window.slateAnsiHtml;
+    live.innerHTML = (p.out ? '<div class="out"><pre>' + ansi(p.out) + '</pre></div>' : '') +
+                     (p.err ? '<div class="warn"><pre>' + ansi(p.err) + '</pre></div>' : '');
+  };
+  function clearCellOutput(id) {
+    const cell = id && document.querySelector(`.cell[data-cid="${id}"]`);
+    const host = cell && cell.querySelector(':scope > .output');
+    if (!host) return;
+    const live = host.querySelector(':scope > .outlive');
+    if (live) live.remove();
+  }
+
   // A running cell reported progress: {frac, msg, id, done}. `done` ends a scope → drop its bar;
   // otherwise upsert the bar for `id`. `prog` tracks the latest update for the chip/badge.
   window.onCellProgress = function (p) {
@@ -211,6 +246,7 @@
     prog = { frac: 0, msg: '' };          // fresh cell → reset any prior progress
     bars.clear();                         // a run is sequential → start each cell's bars fresh
     clearCellBar(id);                     // drop any stale per-cell bar from a previous run
+    clearCellOutput(id);                  // and any live-output block left by the previous run
     if (revealed) {                       // already showing → mark + log immediately
       setLive(id, 'running'); activity('run', id, '');
       ensureTick(); renderPill(); renderChip();
@@ -227,6 +263,7 @@
     if (wasRestored) restored++;
     bars.clear();
     clearCellBar(id);                     // remove the per-cell progress bar(s)
+    clearCellOutput(id);                  // the real output has patched in — drop the live preview
     const errored = cell.state === 'errored';
     if (errored && !revealed) reveal();   // always surface errors (the pill's count is derived at render, not accumulated)
     if (revealed) {

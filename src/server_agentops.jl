@@ -236,9 +236,15 @@ end
 # pixels here, but knows it worked); tables are rendered as text so their data IS visible.
 _cell_result_text(c::Cell) = (o = c.output; o === nothing ? "(not run)" : _output_result_text(o))
 # The agent-facing text for a captured eval result — shared by cells and out-of-band (scratch) evals.
+#
+# Colour is STRIPPED here and only here. Captured output carries SGR now (the page renders it as
+# spans), but an agent reading a tool result gets nothing from `\e[1;31m` except tokens spent on it —
+# and a coloured stacktrace is markedly harder to read as plain text. Escape codes never survive into
+# an agent's view; the browser's copy is untouched.
 function _output_result_text(o)
     o.exception === nothing ||
-        return "ERROR: " * o.exception * (o.backtrace === nothing ? "" : "\n" * first(o.backtrace, 800))
+        return ReportEngine.strip_sgr("ERROR: " * o.exception *
+                                      (o.backtrace === nothing ? "" : "\n" * first(o.backtrace, 800)))
     parts = String[]
     isempty(rstrip(o.stdout)) || push!(parts, rstrip(o.stdout))
     isempty(o.value_repr) || push!(parts, o.value_repr)
@@ -249,7 +255,7 @@ function _output_result_text(o)
     for t in o.tables      # a table's DATA is text-renderable — show it (the agent can't see the widget)
         push!(parts, _table_text(t))
     end
-    txt = rstrip(join(parts, "\n"))
+    txt = rstrip(ReportEngine.strip_sgr(join(parts, "\n")))
     return isempty(txt) ? "(ok — no value)" : txt
 end
 

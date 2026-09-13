@@ -53,7 +53,13 @@ const _WARN_CONT = /^(\s|To make this|Hint:|!!!|Stacktrace|caused by|@ |\[\d)/;
 function _wpParseRecords(lines) {
   const recs = [];
   let cur = null, mode = null;                             // mode: 'box' (┌│└) | 'warn' (WARNING/ERROR block) | null
-  for (const raw of lines) {
+  for (const styled of lines) {
+    // Structure first, colour second. The worker's streams are colour-enabled, so a `@warn` box line
+    // now begins with an SGR sequence rather than `┌` — every test below has to run on the STRIPPED
+    // text or the log stops parsing into records at all. Nothing is lost inside a record: the panel
+    // already colours those by LEVEL, and Julia's own colours would only fight that. An unparsed
+    // `plain` line keeps its styling, which is where the colour actually earns its place.
+    const raw = window.slateAnsiText(styled);
     const c0 = raw.charAt(0);
     if (c0 === '┌') { cur = { head: raw.slice(1).trim(), cont: [] }; mode = 'box'; recs.push(cur); }
     else if (mode === 'box' && (c0 === '│' || c0 === '└') && cur) {
@@ -64,7 +70,7 @@ function _wpParseRecords(lines) {
       cur = { head: (m[1] === 'ERROR' ? 'Error' : 'Warning') + ': ' + m[2], cont: [] }; mode = 'warn'; recs.push(cur);
     } else if (mode === 'warn' && cur && _WARN_CONT.test(raw)) {
       const body = raw.trim(); if (body) cur.cont.push(body);
-    } else { cur = null; mode = null; if (raw.length) recs.push({ plain: raw }); }
+    } else { cur = null; mode = null; if (raw.length) recs.push({ plain: styled }); }
   }
   return recs;
 }
@@ -84,7 +90,9 @@ function _wpCollapse(recs) {
 const _WLVL = { Info: 'info', Warning: 'warn', Error: 'error', Debug: 'debug' };
 function _wpFmtRecord(rec) {
   const badge = rec.count > 1 ? '<span class="wlog-x">×' + rec.count + '</span>' : '';
-  if (rec.plain !== undefined) return '<div class="wlog-rec wlog-plain">' + _wpEsc(rec.plain) + badge + '</div>';
+  // A plain line is whatever the worker printed — Pkg output, `printstyled`, a bare println. It has no
+  // level to colour by, so render its OWN colour.
+  if (rec.plain !== undefined) return '<div class="wlog-rec wlog-plain">' + window.slateAnsiHtml(rec.plain) + badge + '</div>';
   let h = rec.head, ts = '';
   const mt = h.match(/^(\d{2}:\d{2}:\d{2})\s+/); if (mt) { ts = mt[1]; h = h.slice(mt[0].length); }
   let lvl = '', msg = h;
