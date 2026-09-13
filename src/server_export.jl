@@ -3326,7 +3326,15 @@ $(app ? _run_app_help(apptitle, port > 0 ? port : _APP_DEFAULT_PORT) : "")
                 @info "Using a local \$name checkout" path = src
                 Pkg.develop(path = expanduser(String(src)))
             elseif registered
-                Pkg.add(Pkg.PackageSpec(name = name, uuid = uuid))     # registered → latest release
+                spec = Pkg.PackageSpec(name = name, uuid = uuid)
+                Pkg.add(spec)                                           # registered → latest release
+                # …but ENVDIR persists across runs, and `add` on a package the env already holds at an
+                # OLDER release is "already satisfied" — the same no-op documented above for `rev`. So a
+                # visitor who ran an earlier bundle keeps that first resolve forever, dependencies and
+                # all, long after the package has dropped or changed them. `update` advances it.
+                try; Pkg.update(spec); catch e
+                    @warn "Could not update \$name to the latest release — continuing with the installed version" exception = e
+                end
             else
                 Pkg.add(url = url, rev = "main")                        # unregistered → track the branch tip
             end
@@ -3351,7 +3359,11 @@ $(app ? _run_app_help(apptitle, port > 0 ? port : _APP_DEFAULT_PORT) : "")
         startswith(BUNDLE_URL, "http") ||
             error("Bundle \$BUNDLE_NAME not found next to run.jl, and no download URL is set. " *
                   "Put \$BUNDLE_NAME in this folder (download it from the page) and re-run.")
-        dst = joinpath(pwd(), BUNDLE_NAME)
+        # A TEMP dir, never `pwd()`. The download is a transient input that gets expanded into the
+        # install directory — leaving it in whatever folder the one-liner was run from drops a second
+        # real notebook `.jl` there, and the expanded copy inherits its document id, so the two read as
+        # one document in two places and the reader is asked to split a copy they never made.
+        dst = joinpath(mktempdir(; prefix = "slate-bundle-"), BUNDLE_NAME)
         @info "Downloading the notebook bundle" BUNDLE_URL
         Downloads.download(BUNDLE_URL, dst)
         return dst
