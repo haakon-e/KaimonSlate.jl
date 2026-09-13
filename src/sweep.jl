@@ -2298,6 +2298,52 @@ function column_schema(ds::Dataset)
     return (names, types)
 end
 
+"""
+    ds[:] -> NamedTuple of columns
+
+Every row. The explicit spelling of "all of it", so the cost is stated where it is paid; the read
+guard applies exactly as it does to any other slice.
+"""
+Base.getindex(ds::Dataset, ::Colon) = load(ds, 1:length(ds))
+
+# ── Tables.jl, for a module that was INCLUDED rather than loaded ──────────────────────────────
+# `ext/KaimonSlateTablesExt.jl` covers Slate loaded as a PACKAGE. A notebook is not that case: the
+# worker builds `Main.SlateWorker` by including this source (worker.jl: "This is NOT part of `using
+# KaimonSlate`"), and Julia fires a package extension only for a package.
+#
+# So the methods are defined HERE, at module-load time — during worker boot, before any user frame
+# exists. That timing is the whole point: defining them later, when a cell first needs them, puts
+# them in a NEWER WORLD than the frame that triggered it, so the very cell that caused the
+# registration cannot see them and `DataFrame(pilot.dataset)` fails once and works on a re-run.
+#
+# Resolved by UUID rather than `using`, for the reason `_ds_arrow` gives: `using` reaches only a
+# project's DIRECT dependencies, while the manifest is the honest test of "is it available here?".
+# It succeeds precisely in the notebooks that could use it — one that wants `DataFrame(ds)` has
+# DataFrames, so it has Tables — and does nothing in the rest.
+#
+# Columns, not rows. A row consumer wants every column in order, which forfeits both projection and
+# chunk pruning and pays a NamedTuple per row; `Tables.columns` hands over the vectors `load`
+# already built. `DataFrame(ds)` is therefore exactly `DataFrame(ds[:])`.
+let T = try
+            Base.require(Base.PkgId(Base.UUID("bd369af6-aec1-5ad0-b16a-f7cc5008161c"), "Tables"))
+        catch
+            nothing
+        end
+    if T !== nothing
+        @eval begin
+            $T.istable(::Type{<:Dataset}) = true
+            $T.columnaccess(::Type{<:Dataset}) = true
+            $T.columns(ds::Dataset) = ds[:]
+            $T.partitions(ds::Dataset) = partitions(ds)
+            function $T.schema(ds::Dataset)
+                ds.kind === :table || return nothing
+                nm, ty = column_schema(ds)
+                return $T.Schema(Tuple(nm), Tuple(ty))
+            end
+        end
+    end
+end
+
 Base.length(p::DatasetPartitions) = length(p.blocks)
 Base.eltype(::Type{DatasetPartitions}) = NamedTuple
 Base.IteratorSize(::Type{DatasetPartitions}) = Base.HasLength()
