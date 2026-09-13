@@ -1099,8 +1099,11 @@ function renderPalette() {
   if (!chips.length) { list.innerHTML = '<div class="phint">No <code>@bind</code> controls declared yet.</div>'; return; }
   list.innerHTML = chips.map(c => {
     const host = c.hosts.length ? '→ ' + c.hosts.join(', ') : '';
+    // The value is ellipsised in a 300px drawer, so carry it in the tooltip — otherwise a long one
+    // (a URL, a path) is truncated with no way to read the rest.
+    const vt = String(c.value == null ? '' : c.value);
     return `<div class="chip${c.hosts.length ? ' hosted' : ''}" draggable="true" data-pname="${c.name}" data-def="${c.def}"` +
-      ` title="drag into a cell to surface it · click to jump to ‘${c.def}’${c.hosts.length ? ' · surfaced in ' + c.hosts.map(h => '‘' + h + '’').join(', ') : ''}">` +
+      ` title="${window.slateEscHtml(c.name + ' = ' + vt)}&#10;drag into a cell to surface it · click to jump to ‘${c.def}’${c.hosts.length ? ' · surfaced in ' + c.hosts.map(h => '‘' + h + '’').join(', ') : ''}">` +
       `<span class="cname">${c.name}</span><span class="ctype">${c.widget}</span>` +
       `<span class="cright">${host ? `<span class="chost">${host}</span>` : ''}` +
       `<span class="pval" data-pname="${c.name}">${c.value}</span></span></div>`;

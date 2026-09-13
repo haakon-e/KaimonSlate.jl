@@ -1317,14 +1317,22 @@ input.toggle:checked::after { left:18px; }
 /* A bound control surfaced in a strip elsewhere collapses to this slim chip. */
 .hostedph { display:flex; align-items:center; gap:8px; padding:6px 14px; color:var(--dim); font-size:.78rem; }
 .hostedph .wname { min-width:auto; }
-/* Controls palette — a side drawer listing every declared @bind across the notebook. */
-.palette { position:fixed; top:0; right:0; height:100vh; width:300px; background:var(--bg2);
-  border-left:1px solid var(--border); transform:translateX(100%); transition:transform .18s ease;
-  z-index:20; display:flex; flex-direction:column; }
+/* ── Right-edge slide-in drawer ──────────────────────────────────────────────────────────────────
+   The shared shell for every full-height panel docked to the right: controls, history, worker log,
+   scratchpad. Panel classes below add ONLY their width.
+   Copied per panel, these properties drifted: the controls drawer sat at z-index 20 while its three
+   siblings were at 60, so opening the agent panel (25) buried the controls you had just opened. It
+   also carried a different border colour, a different shadow, and no max-width. */
+.drawer { position:fixed; top:0; right:0; height:100vh; max-width:96vw; background:var(--bg2);
+  border-left:1px solid var(--bg3); transform:translateX(100%); transition:transform .18s ease;
+  z-index:60; display:flex; flex-direction:column; }
 /* Shadow only when open — a closed panel is parked off-screen-right (translateX 100%) and its
    shadow would otherwise bleed back onto the viewport's right edge (stacking with the other panels
    into a dark "fade"). */
-.palette.open { transform:none; box-shadow:-8px 0 24px rgba(0,0,0,.3); }
+.drawer.open { transform:none; box-shadow:-8px 0 24px #0007; }
+
+/* Controls palette — a side drawer listing every declared @bind across the notebook. */
+.palette { width:300px; }
 /* Agent chat panel (consumer of Kaimon's agent service) */
 /* The drawer's top is aligned to the first content cell (--agent-top, measured in JS) so it
    sits below the menu bar and lines up with the notebook. The topbar-height + page-gutter
@@ -1464,10 +1472,7 @@ body.modkey .cm-content { cursor: pointer; }
 .cm-completionInfo .docmd > :first-child { margin-top:0; }
 .cm-completionInfo .docmd > :last-child { margin-bottom:0; }
 /* History panel (time machine) */
-.histpanel { position:fixed; top:0; right:0; height:100vh; width:420px; max-width:94vw; background:var(--bg2);
-  border-left:1px solid var(--bg3); transform:translateX(100%);
-  transition:transform .18s ease; z-index:60; display:flex; flex-direction:column; }
-.histpanel.open { transform:none; box-shadow:-8px 0 24px #0007; }   /* shadow only when open (see .palette) */
+.histpanel { width:420px; max-width:94vw; }
 .hbtn { background:var(--bg3); border:none; color:var(--fg); border-radius:6px; padding:3px 9px; cursor:pointer; font-size:.8rem; }
 .hbtn:hover { background:var(--accent); }
 .hbtn.stop { background:var(--red); }
@@ -1489,10 +1494,9 @@ body.modkey .cm-content { cursor: pointer; }
 .histprev .dl.ctx { color:var(--dim); }
 .histprev .dl.gap { color:var(--dim); text-align:center; font-style:italic; opacity:.7; padding:2px 4px; }
 /* Worker log panel */
-.logpanel { position:fixed; top:0; right:0; height:100vh; width:480px; max-width:96vw; background:var(--bg2);
-  border-left:1px solid var(--bg3); transform:translateX(100%);
-  transition:transform .18s ease; z-index:60; display:flex; flex-direction:column; }
-.logpanel.open { transform:none; box-shadow:-8px 0 24px #0007; }   /* shadow only when open (see .palette) */
+/* Shared by the worker log, the activity monitor and the package panel (#logpanel, #actpanel,
+   #pkgpanel) — three drawers that differ only in content. */
+.logpanel { width:480px; }
 /* Pipeline DAG split pane — the live dataflow graph (dag.js) docked on the right, the
    notebook reflowing to the left half: click a node to navigate the code, watch the graph
    recompute while you edit. The divider is mouse-resizable (--dagw, persisted). */
@@ -1691,10 +1695,7 @@ body.dag-open.dag-bottom .page { padding-bottom:calc(var(--dagh, 42vh) + 40px); 
 .logbox::-webkit-scrollbar-thumb { background:var(--border); border:2px solid transparent; background-clip:content-box; border-radius:7px; }
 .logbox::-webkit-scrollbar-thumb:hover { background:var(--dim); background-clip:content-box; }
 /* Scratchpad panel — slate.eval diagnostics, surfaced but kept out of the document */
-.scratchpanel { position:fixed; top:0; right:0; height:100vh; width:520px; max-width:96vw; background:var(--bg2);
-  border-left:1px solid var(--bg3); transform:translateX(100%);
-  transition:transform .18s ease; z-index:60; display:flex; flex-direction:column; }
-.scratchpanel.open { transform:none; box-shadow:-8px 0 24px #0007; }
+.scratchpanel { width:520px; }
 .scratchbody { flex:1 1 0; min-height:0; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:10px;
   scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
 .scratchbody::-webkit-scrollbar { width:10px; }
@@ -2049,15 +2050,21 @@ body.dag-open.dag-bottom .page { padding-bottom:calc(var(--dagh, 42vh) + 40px); 
 body.cdnd .plist::after { content:'drop here to remove'; color:var(--dim); font-size:.72rem; text-align:center; padding:6px; }
 .phint { color:var(--dim); font-size:.8rem; padding:10px; }
 .pfoot { padding:10px 14px; border-top:1px solid var(--border); font-size:.72rem; }
+/* A flex item refuses to shrink below its content by default (min-width:auto), so a long value — a
+   URL in a text control, say — pushed straight out through the card's right edge. `min-width:0` lets
+   the name and the value both give way, and shrink is proportional to content, so the value yields
+   first. Truncated text stays readable from the chip's tooltip. */
 .chip { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--bg3);
   border:1px solid var(--border); border-left:3px solid var(--purple); border-radius:6px;
-  cursor:pointer; font-size:.82rem; }
+  cursor:pointer; font-size:.82rem; overflow:hidden; }
 .chip:hover { border-color:var(--accent); }
-.chip .cname { font-family:'Cascadia Code',monospace; color:var(--accent); }
-.chip .ctype { color:var(--dim); font-size:.72rem; }
-.chip .cright { margin-left:auto; display:flex; align-items:center; gap:8px; }
-.chip .chost { color:var(--gold); font-size:.72rem; }
-.chip .pval { color:var(--val); font-family:'Cascadia Code',monospace; }
+.chip .cname { font-family:'Cascadia Code',monospace; color:var(--accent);
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chip .ctype { color:var(--dim); font-size:.72rem; flex:0 0 auto; }
+.chip .cright { margin-left:auto; display:flex; align-items:center; gap:8px; min-width:0; }
+.chip .chost { color:var(--gold); font-size:.72rem; flex:0 0 auto; }
+.chip .pval { color:var(--val); font-family:'Cascadia Code',monospace;
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chip.hosted { opacity:.7; }
 /* Blurred like every other full-screen overlay (disconnect, run-cell, package install) — this was
    the one that dimmed without it, so a busy notebook stayed legible enough behind a dialog to
