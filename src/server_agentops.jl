@@ -1218,9 +1218,18 @@ function set_kind!(nb::LiveNotebook, id::AbstractString, kind::AbstractString; s
         # Converting OUT of a web cell: the browser sends the reassembled `@web(...)` skin as `source`, and a
         # plain code/markdown cell shouldn't inherit that wrapper — unwrap it so `code → web → code` round-trips
         # back to the original text instead of accumulating a `@web(...)` skin.
+        #
+        # Converting IN is the mirror, and skipping it left the cell diverging from itself: the source stayed
+        # plain text while the browser mounted a web editor whose panes reassemble a `@web(...)` skin, so
+        # `edText` and the stored source disagreed from the moment of the convert. The cell then showed
+        # `edited` with nothing typed, and the next external edit had an editor matching neither side. The
+        # body goes to the HTML pane, which is where `_web_sections` folds untagged source anyway, so this
+        # stores what the editor was going to reassemble regardless.
         newkind = _cellkind(kind)
         if old.kind == WEB && newkind != WEB
             src = ReportEngine._web_unwrap(src)
+        elseif newkind == WEB && old.kind != WEB
+            src = ReportEngine._web_skin(; html = src)
         end
         cells[i] = Cell(old.id, newkind, src)
         build_dependencies!(nb.report)
