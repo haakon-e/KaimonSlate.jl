@@ -33,6 +33,7 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Tachikoma = "468859d6-42d8-48b7-8ad9-1d312e0e3b0a"
 Tar = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
+ripgrep_jll = "e10fc14b-37cd-5cbc-b289-ad01b12ebaad"
 Typst_jll = "eb4b1da6-20f6-5c66-9826-fdb8ad410d0e"
 
 [weakdeps]
@@ -74,6 +75,7 @@ Tachikoma = "2.6.1"
 Tar = "1.10"
 Typst_jll = "0.14"
 julia = "1.12"
+ripgrep_jll = "13"
 
 [apps.slate]
 

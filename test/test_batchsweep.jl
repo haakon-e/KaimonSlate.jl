@@ -1345,6 +1345,74 @@ end
         end
     end
 
+    @testset "a log is read by byte range, and searched whole" begin
+        # A job's output has no size bound, so the viewer never reads a whole file: it names byte
+        # ranges, pages backwards from the end, and searches on the side the file lives on. These
+        # check the three properties that makes possible — a window is whole lines, pages abut, and
+        # a search hit's offset is a position you can actually seek to.
+        mktempdir() do root
+            t = Sweep.LocalTarget(; root, project = tempdir(), chunk = 2,
+                                  payload = joinpath(@__DIR__, "..", "src", "slatetask.jl"))
+            r = Sweep.@sweep(Sweep.paramgrid(x = 1:2), t; submit = false) do p; p.x; end
+            mkpath(joinpath(root, "logs")); mkpath(BS.jobs_dir(root))
+            chunks = BS.sweep_chunks(root, r.run)
+            name = BS.submission_name(chunks)
+            write(BS.index_path(root, name), join(chunks, "\n") * "\n")
+            # Big enough that nothing here can be passing by accident of fitting in one read.
+            path = joinpath(root, "logs", "$(name).1.log")
+            open(path, "w") do io
+                for i in 1:60_000
+                    lvl = i % 5_000 == 0 ? "ERROR" : i % 500 == 0 ? "WARN" : "INFO"
+                    println(io, "2026-09-12 [", lvl, "] unit ", i, " did a thing")
+                end
+            end
+            sz = filesize(path)
+            @test sz > 1_000_000
+
+            @test Sweep.log_stat(r, path).bytes == sz
+
+            # The newest page, asked for without knowing the size.
+            a = Sweep.log_slice(r, path; offset = -4096, nbytes = 4096)
+            @test a.size == sz && a.to == sz - 1
+            la = split(a.text, '\n'; keepempty = false)
+            @test startswith(first(la), "2026-09-12 ") && endswith(last(la), "did a thing")
+
+            # …and the page before it abuts exactly: no line shown twice, none skipped.
+            b = Sweep.log_slice(r, path; offset = a.from - 4096, nbytes = 4096)
+            @test b.to + 1 == a.from
+            @test endswith(last(split(b.text, '\n'; keepempty = false)), "did a thing")
+
+            # Counts are over the WHOLE file, not the window — which is what makes them mean
+            # anything next to a filter.
+            e = Sweep.log_search(r, path, "ERROR")
+            @test e.total == 12                       # 60_000 ÷ 5_000
+            @test Sweep.log_search(r, path, "WARN").total == 108   # ÷500, less those taken by ERROR
+            @test Sweep.log_search(r, path, "no-such-text").total == 0
+
+            # A hit's offset is a real position: seeking to it lands ON the matching line, not the
+            # one after. The trim that makes a window whole must not eat a line it was handed the
+            # start of.
+            h = first(e.hits)
+            @test h.line == 5_000
+            at = Sweep.log_slice(r, path; offset = h.offset, nbytes = 200)
+            @test first(split(at.text, '\n')) == h.text
+            @test occursin("ERROR", h.text) && occursin("unit 5000 ", h.text)
+
+            # `limit` bounds what comes back without touching what is reported.
+            few = Sweep.log_search(r, path, "ERROR"; limit = 3)
+            @test few.total == 12 && length(few.hits) == 3 && few.capped
+
+            # Case folding is the search's, not the caller's.
+            @test Sweep.log_search(r, path, "error"; ignorecase = true).total == 12
+            @test Sweep.log_search(r, path, "error").total == 0
+
+            # And a path the listing never named is refused, because it would reach a shell.
+            @test_throws ErrorException Sweep.log_slice(r, "/etc/passwd")
+            @test_throws ErrorException Sweep.log_search(r, "/etc/passwd", "root")
+            @test_throws ErrorException Sweep.log_stat(r, "/etc/passwd")
+        end
+    end
+
     @testset "a sweep can be asked what its jobs printed" begin
         # The failures that cost the most time leave NO manifest — an OOM kill, a walltime cut, a
         # prologue that failed — so `r.errors` is empty and the only account of what happened is the

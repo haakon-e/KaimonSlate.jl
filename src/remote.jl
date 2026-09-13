@@ -1201,9 +1201,11 @@ const _PREP_DONE_SNIPPET = "try; println(stderr, \"@@SLATE_PREP done\"); flush(s
 # The remote script: rewrite each dev dep's Manifest `path` to its shipped remote source, then instantiate
 # the project. Uses the TOML stdlib on the remote (always available); homedir() resolves the absolute paths.
 function _env_instantiate_script(projrel::AbstractString, rewrites::Vector{Tuple{String,String}}, add_revise::Bool)
-    infra = add_revise ?
-        "[Pkg.PackageSpec(name=\"KaimonGate\"), Pkg.PackageSpec(name=\"ExpressionExplorer\"), Pkg.PackageSpec(name=\"Revise\")]" :
-        "[Pkg.PackageSpec(name=\"KaimonGate\"), Pkg.PackageSpec(name=\"ExpressionExplorer\")]"
+    # `ripgrep_jll` mirrors src/worker_infra: the log viewer searches whole files, which for a job's
+    # output means gigabytes, and rg does that in one pass over a range rather than a transfer.
+    base = "Pkg.PackageSpec(name=\"KaimonGate\"), Pkg.PackageSpec(name=\"ExpressionExplorer\"), " *
+           "Pkg.PackageSpec(name=\"ripgrep_jll\")"
+    infra = add_revise ? "[$base, Pkg.PackageSpec(name=\"Revise\")]" : "[$base]"
     io = IOBuffer()
     # Redirect dev deps' Manifest + [sources] paths to their shipped devsrc locations (no-op when empty).
     rw = _rewrite_devpaths_script(projrel, rewrites)

@@ -2774,6 +2774,58 @@ command on a login node. Anything not in the listing is refused rather than quot
 """
 log_tail(r::ShardedResult, path::AbstractString; kw...) =
     log_tail(getfield(r, :target), getfield(r, :run), path; kw...)
+# Every entry point that takes a path from the browser passes through here first. The check is the
+# security boundary, not a nicety: the path is about to be interpolated into a command on a login
+# node, so anything the listing did not name is refused rather than quoted and hoped for.
+function _known_log(t::SweepTarget, run::AbstractString, path::AbstractString)
+    String(path) in Set(String(e.path) for e in log_files(t, run)) ||
+        error("no such log for this sweep: $(path)")
+    return String(path)
+end
+
+"""
+    log_stat(r, path) -> (; bytes, modified)
+
+One log's size and mtime. What a live view polls: re-reading only matters once the file has grown,
+and this answers that for the cost of a stat rather than a transfer.
+"""
+log_stat(r::ShardedResult, path::AbstractString) =
+    log_stat(getfield(r, :target), getfield(r, :run), path)
+log_stat(t::SweepTarget, run::AbstractString, path::AbstractString) =
+    BatchLauncher.log_stat(launcher_for(t), _known_log(t, run, path))
+
+"""
+    log_slice(r, path; offset = -65536, nbytes = 65536) -> (; text, from, to, size)
+
+A byte range of one log, trimmed to whole lines. A negative `offset` counts from the END, so the
+newest page needs no prior knowledge of the size, and paging backwards is asking for
+`[from - nbytes, from)` next.
+
+Byte ranges rather than line numbers throughout: a line number cannot be resolved without counting
+from the start of the file, which is what a job's output is too large to permit.
+"""
+log_slice(r::ShardedResult, path::AbstractString; kw...) =
+    log_slice(getfield(r, :target), getfield(r, :run), path; kw...)
+log_slice(t::SweepTarget, run::AbstractString, path::AbstractString;
+          offset::Integer = -(1 << 16), nbytes::Integer = 1 << 16) =
+    BatchLauncher.log_slice(launcher_for(t), _known_log(t, run, path); offset, nbytes)
+
+"""
+    log_search(r, path, pattern; ignorecase, regex, limit) -> (; total, hits, capped)
+
+Every line of one log matching `pattern`, as `(; offset, line, text)`. `total` counts the whole file
+even when `hits` stops at `limit` — "3 of 412" is the number a reader needs, and a count that
+silently meant "3 of the first 1000" would be a lie about the file.
+
+The offsets are what a viewer seeks to, so a match is reachable without reading what precedes it.
+"""
+log_search(r::ShardedResult, path::AbstractString, pattern::AbstractString; kw...) =
+    log_search(getfield(r, :target), getfield(r, :run), path, pattern; kw...)
+log_search(t::SweepTarget, run::AbstractString, path::AbstractString, pattern::AbstractString;
+           ignorecase::Bool = false, regex::Bool = false, limit::Integer = 1000) =
+    BatchLauncher.log_search(launcher_for(t), _known_log(t, run, path), String(pattern);
+                             ignorecase, regex, limit)
+
 function log_tail(t::SweepTarget, run::AbstractString, path::AbstractString;
                   lines::Integer = LOG_TAIL_LINES)
     known = Set(String(e.path) for e in log_files(t, run))

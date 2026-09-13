@@ -16,7 +16,7 @@ module BatchLauncher
 import Dates
 
 export Launcher, ExecLauncher, SlurmLauncher, PbsLauncher, JobSpec, submit!, poll, cancel!, logs,
-       log_files, log_tail
+       log_files, log_tail, log_stat, log_slice, log_search
 
 """
     JobSpec
@@ -192,6 +192,65 @@ function tail_file(path::AbstractString, lines::Integer; window::Integer = _TAIL
     end
 end
 
+# ── Reading a log that will not fit in memory ────────────────────────────────────────────────
+# A job's output has no size bound, and the viewer has to search ALL of it, page backwards through
+# it, and stay responsive. So nothing here ever reads a whole file: every call names a byte range,
+# and searching is a scan on whichever side the file lives.
+#
+# Byte offsets are the addressing throughout — not line numbers. A line number cannot be turned into
+# a position without counting from the start of the file, which is the one thing a gigabyte forbids;
+# an offset can be seeked to directly, and `rg --json` reports one per match for free.
+
+# ripgrep, resolved by UUID rather than imported. `using` reaches only a project's DIRECT
+# dependencies, and this file is included into the worker (built against the NOTEBOOK's project) as
+# well as the hub — the artifact is on both paths, but named by neither. Falls back to an `rg` on
+# PATH, which is what a remote login node offers. `nothing` when there is none, and the caller says
+# so rather than pretending the file had no matches.
+const _RG_UUID = "e10fc14b-37cd-5cbc-b289-ad01b12ebaad"
+const _RG = Ref{Any}(missing)         # missing = not looked for yet; nothing = looked, not found
+function _rg()
+    _RG[] === missing || return _RG[]
+    p = try
+        m = Base.require(Base.PkgId(Base.UUID(_RG_UUID), "ripgrep_jll"))
+        collect(String, Base.invokelatest(getfield(m, :rg)).exec)
+    catch
+        w = Sys.which("rg")
+        w === nothing ? nothing : String[w]
+    end
+    _RG[] = p
+    return p
+end
+
+"""
+    log_stat(launcher, path) -> (; bytes, modified)
+
+One file's size and mtime, which is all a poll needs to know whether to re-read. `bytes = -1` when
+the file cannot be reached at all, which is different from an empty file and reads differently.
+"""
+function log_stat end
+
+"""
+    log_slice(launcher, path; offset, nbytes) -> (; text, from, to, size)
+
+`nbytes` of the file starting at `offset`, with the partial lines at each end trimmed so what comes
+back is whole. `from`/`to` are the byte range actually returned, which is how a caller pages
+backwards: ask for `[from - N, from)` next.
+
+A negative `offset` counts from the END, so the first page of a viewer that shows newest content
+first is `offset = -nbytes` and needs no prior knowledge of the size.
+"""
+function log_slice end
+
+"""
+    log_search(launcher, path, pattern; ignorecase = false, regex = false, limit = 1000)
+        -> (; total, hits, capped)
+
+Every line matching `pattern`, as `(; offset, line, text)` — `offset` being the byte position the
+viewer seeks to. `total` counts the whole file even when `hits` stops at `limit`, because "3 of 412"
+is the number a reader needs and truncating it silently would be a lie about the file.
+"""
+function log_search end
+
 # The command a task process runs. Written once here so every backend launches identically and a
 # bug in the invocation cannot differ between local and cluster runs.
 #
@@ -324,6 +383,129 @@ function log_files(::ExecLauncher, root::AbstractString, name::AbstractString)
     end
     sort!(out; by = e -> (-e.modified, e.path))
     return out
+end
+
+function log_stat(::ExecLauncher, path::AbstractString)
+    isfile(path) || return (; bytes = -1, modified = 0)
+    return (; bytes = Int(filesize(path)),
+              modified = try; round(Int, mtime(path)); catch; 0; end)
+end
+
+# Trim to whole lines at BOTH ends. A window that begins mid-line shows half of one, and — worse —
+# can begin mid-character, so the bytes do not decode. Dropping to the first newline fixes both.
+# The end is only trimmed when there is more file after it; the last line of a file is whole.
+#
+# `aligned` says the offset is ALREADY a line start, in which case trimming would throw away a whole
+# good line — which is exactly what a search hit is, since `rg` reports the offset of the line's
+# first byte. The caller establishes it by looking at the byte before, so no API carries the claim.
+function _whole_lines(buf::Vector{UInt8}, from::Int, size::Int; aligned::Bool = false)
+    lo = 1
+    if from > 0 && !aligned
+        i = findfirst(==(UInt8('\n')), buf)
+        i === nothing ? (return ("", from, from)) : (lo = i + 1)
+    end
+    hi = length(buf)
+    if from + length(buf) < size
+        j = findlast(==(UInt8('\n')), buf)
+        j === nothing ? (return ("", from, from)) : (hi = j)
+    end
+    lo > hi && return ("", from + lo - 1, from + lo - 1)
+    return (String(@view buf[lo:hi]), from + lo - 1, from + hi - 1)
+end
+
+function log_slice(::ExecLauncher, path::AbstractString; offset::Integer = -1 << 16,
+                   nbytes::Integer = 1 << 16)
+    isfile(path) || return (; text = "", from = 0, to = 0, size = 0)
+    size = Int(filesize(path))
+    n = max(0, Int(nbytes))
+    from = Int(offset) < 0 ? max(0, size + Int(offset)) : min(Int(offset), size)
+    n = min(n, size - from)
+    n <= 0 && return (; text = "", from, to = from, size)
+    buf, aligned = open(path, "r") do io
+        a = true
+        if from > 0                          # is `from` already the first byte of a line?
+            seek(io, from - 1)
+            a = read(io, UInt8) == UInt8('\n')
+        end
+        seek(io, from)
+        (read(io, n), a)
+    end
+    text, lo, hi = _whole_lines(buf, from, size; aligned)
+    return (; text, from = lo, to = hi, size)
+end
+
+# `rg --json` emits one object per event; a `match` carries `absolute_offset` and the line's text,
+# which is exactly the pair the viewer needs and avoids parsing a `grep -bn` prefix out of content
+# that may itself contain colons. `--count-matches` is a second, cheap pass for the true total.
+function log_search(::ExecLauncher, path::AbstractString, pattern::AbstractString;
+                    ignorecase::Bool = false, regex::Bool = false, limit::Integer = 1000)
+    (isfile(path) && !isempty(pattern)) ||
+        return (; total = 0, hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[],
+                  capped = false)
+    rg = _rg()
+    rg === nothing && error("log search needs ripgrep, and neither the bundled artifact nor an " *
+                            "`rg` on PATH could be found")
+    return _rg_search(rg, path, pattern, ignorecase, regex, limit)
+end
+
+function _rg_search(rg, path, pattern, ignorecase, regex, limit)
+    flags = String[]
+    ignorecase && push!(flags, "-i")
+    regex || push!(flags, "-F")
+    hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[]
+    total = 0
+    out = try
+        read(Cmd(String[rg..., flags..., "--json", "--", String(pattern), String(path)]), String)
+    catch
+        ""                                   # rg exits 1 on "no matches", which is not an error
+    end
+    for ln in eachsplit(out, '\n'; keepempty = false)
+        # Deliberately not a JSON parse: these lines are machine-written, one per event, and the
+        # three fields wanted are flat. Pulling them out directly keeps this free of a JSON
+        # dependency in a file that is included into the worker.
+        occursin("\"type\":\"match\"", ln) || continue
+        total += 1
+        length(hits) < limit || continue
+        off = _json_int(ln, "absolute_offset")
+        no  = _json_int(ln, "line_number")
+        txt = _json_text(ln)
+        push!(hits, (; offset = off, line = no, text = txt))
+    end
+    return (; total, hits, capped = total > length(hits))
+end
+
+function _json_int(s::AbstractString, key::AbstractString)
+    i = findfirst("\"$key\":", s); i === nothing && return 0
+    j = nextind(s, last(i))
+    k = j
+    while k <= lastindex(s) && !isdigit(s[k]); k = nextind(s, k); end
+    e = k
+    while e <= lastindex(s) && isdigit(s[e]); e = nextind(s, e); end
+    return something(tryparse(Int, s[k:prevind(s, e)]), 0)
+end
+
+# A match's line text lives at `"lines":{"text":"…"}`. Binary or invalid UTF-8 comes back as
+# `{"bytes":"<base64>"}` instead, which is reported as such rather than guessed at.
+function _json_text(s::AbstractString)
+    i = findfirst("\"lines\":{\"text\":\"", s)
+    i === nothing && return "(binary)"
+    j = nextind(s, last(i))
+    io = IOBuffer()
+    while j <= lastindex(s)
+        c = s[j]
+        if c == '\\'
+            j = nextind(s, j); j > lastindex(s) && break
+            d = s[j]
+            print(io, d == 'n' ? '\n' : d == 't' ? '\t' : d == 'r' ? '\r' :
+                      d == '"' ? '"' : d == '\\' ? '\\' : d)
+        elseif c == '"'
+            break
+        else
+            print(io, c)
+        end
+        j = nextind(s, j)
+    end
+    return rstrip(String(take!(io)), '\n')
 end
 
 log_tail(::ExecLauncher, path::AbstractString; lines::Int = 500) =
@@ -545,10 +727,87 @@ _remote_log_tail(runner, path, lines) = begin
     ok ? txt : ""
 end
 
+# The same three primitives, on the far side. Each is ONE command: a login node is reached over a
+# shared connection and a round trip costs more than the work, so nothing here reads a file twice.
+_remote_log_stat(runner, path) = begin
+    q = _shq(String(path))
+    ok, txt = runner("[ -f $q ] || exit 1; " *
+                     "m=\$(stat -c %Y $q 2>/dev/null || stat -f %m $q 2>/dev/null || echo 0); " *
+                     "b=\$(stat -c %s $q 2>/dev/null || stat -f %z $q 2>/dev/null || echo 0); " *
+                     "printf '%s\\t%s\\n' \"\$m\" \"\$b\"")
+    ok || return (; bytes = -1, modified = 0)
+    parts = split(strip(String(txt)), '\t')
+    length(parts) == 2 || return (; bytes = -1, modified = 0)
+    return (; bytes = something(tryparse(Int, parts[2]), 0),
+              modified = something(tryparse(Int, parts[1]), 0))
+end
+
+# `dd` with explicit byte units, the same primitive `range_command` uses for a blob: it seeks rather
+# than streaming the file through `tail`, so the cost is the range and not the offset.
+function _remote_log_slice(runner, path, offset::Integer, nbytes::Integer)
+    st = _remote_log_stat(runner, path)
+    st.bytes < 0 && return (; text = "", from = 0, to = 0, size = 0)
+    size = st.bytes
+    n = max(0, Int(nbytes))
+    from = Int(offset) < 0 ? max(0, size + Int(offset)) : min(Int(offset), size)
+    n = min(n, size - from)
+    n <= 0 && return (; text = "", from, to = from, size)
+    # One byte earlier when there is one, so the caller can tell whether `from` was already a line
+    # boundary — the same question `log_slice` answers locally by peeking behind the offset.
+    back = from > 0 ? 1 : 0
+    ok, txt = runner("dd if=" * _shq(String(path)) * " bs=1 skip=$(from - back) " *
+                     "count=$(n + back) iflag=skip_bytes,count_bytes 2>/dev/null")
+    ok || return (; text = "", from, to = from, size)
+    buf = Vector{UInt8}(String(txt))
+    aligned = back == 1 ? (!isempty(buf) && buf[1] == UInt8('\n')) : true
+    back == 1 && !isempty(buf) && (buf = buf[2:end])
+    text, lo, hi = _whole_lines(buf, from, size; aligned)
+    return (; text, from = lo, to = hi, size)
+end
+
+# rg when the far side has it — the JSON carries the byte offset, which is what the viewer seeks to.
+# Otherwise `grep -bn`, whose `offset:line:text` prefix carries the same two numbers; the content
+# may itself contain colons, so only the first two are split off.
+function _remote_log_search(runner, path, pattern, ignorecase, regex, limit)
+    q = _shq(String(path)); pq = _shq(String(pattern))
+    ic = ignorecase ? " -i" : ""
+    fixed = regex ? "" : " -F"
+    ok, txt = runner("if command -v rg >/dev/null 2>&1; then " *
+                     "rg$(ic)$(fixed) --json -- $pq $q; else " *
+                     "grep -b -n$(ic)$(regex ? " -E" : " -F") -- $pq $q; fi 2>/dev/null")
+    hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[]
+    total = 0
+    ok || return (; total, hits, capped = false)
+    for ln in eachsplit(String(txt), '\n'; keepempty = false)
+        if occursin("\"type\":\"match\"", ln)
+            total += 1
+            length(hits) < limit &&
+                push!(hits, (; offset = _json_int(ln, "absolute_offset"),
+                               line = _json_int(ln, "line_number"), text = _json_text(ln)))
+        elseif !startswith(ln, "{")
+            # grep: `<byteoffset>:<lineno>:<text>`
+            a = findfirst(':', ln); a === nothing && continue
+            b = findnext(':', ln, a + 1); b === nothing && continue
+            off = tryparse(Int, ln[1:a-1]); no = tryparse(Int, ln[a+1:b-1])
+            (off === nothing || no === nothing) && continue
+            total += 1
+            length(hits) < limit && push!(hits, (; offset = off, line = no, text = ln[b+1:end]))
+        end
+    end
+    return (; total, hits, capped = total > length(hits))
+end
+
 log_files(l::SlurmLauncher, root::AbstractString, name::AbstractString) =
     _remote_log_files(sc -> _ssh(l, sc), root, name)
 log_tail(l::SlurmLauncher, path::AbstractString; lines::Int = 500) =
     _remote_log_tail(sc -> _ssh(l, sc), path, lines)
+log_stat(l::SlurmLauncher, path::AbstractString) = _remote_log_stat(sc -> _ssh(l, sc), path)
+log_slice(l::SlurmLauncher, path::AbstractString; offset::Integer = -(1 << 16),
+          nbytes::Integer = 1 << 16) =
+    _remote_log_slice(sc -> _ssh(l, sc), path, offset, nbytes)
+log_search(l::SlurmLauncher, path::AbstractString, pattern::AbstractString; ignorecase::Bool = false,
+           regex::Bool = false, limit::Integer = 1000) =
+    _remote_log_search(sc -> _ssh(l, sc), path, pattern, ignorecase, regex, limit)
 
 """
     explain_failure(l::SlurmLauncher, name) -> String
@@ -903,6 +1162,13 @@ log_files(l::PbsLauncher, root::AbstractString, name::AbstractString) =
     _remote_log_files(sc -> _ssh(l, sc), root, name)
 log_tail(l::PbsLauncher, path::AbstractString; lines::Int = 500) =
     _remote_log_tail(sc -> _ssh(l, sc), path, lines)
+log_stat(l::PbsLauncher, path::AbstractString) = _remote_log_stat(sc -> _ssh(l, sc), path)
+log_slice(l::PbsLauncher, path::AbstractString; offset::Integer = -(1 << 16),
+          nbytes::Integer = 1 << 16) =
+    _remote_log_slice(sc -> _ssh(l, sc), path, offset, nbytes)
+log_search(l::PbsLauncher, path::AbstractString, pattern::AbstractString; ignorecase::Bool = false,
+           regex::Bool = false, limit::Integer = 1000) =
+    _remote_log_search(sc -> _ssh(l, sc), path, pattern, ignorecase, regex, limit)
 
 """
     explain_failure(l::PbsLauncher, name) -> String
