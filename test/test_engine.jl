@@ -394,6 +394,19 @@ end
     # no settings → no config footer
     @test !occursin("Slate.config", serialize_report(parse_report("#%% code id=a\nx = 1")))
 
+    # A docid ALONE renders and round-trips. `export_standalone` emits exactly this footer, so a
+    # downloaded bundle stays the same document as the one that was published instead of being read
+    # as an anonymous copy — and nothing else from the author's config travels with it.
+    let did = "11111111-2222-3333-4444-555555555555"
+        only_id = ReportEngine._render_config_footer(Dict{String,Any}("docid" => did))
+        @test occursin("Slate.config", only_id) && occursin(did, only_id)
+        for k in ("runon", "regions", "publishrepo", "publishslug", "juliaflags")
+            @test !occursin(k, only_id)
+        end
+        back = parse_report("#%% code id=a\nx = 1\n\n" * only_id)
+        @test back.meta["docid"] == did
+    end
+
     # config + env footers coexist (env still parses, not polluted by config)
     re = parse_report("#%% code id=a\nx = 1")
     re.meta["env"] = [Dict{String,Any}("name" => "Foo", "version" => "1.2.3", "uuid" => "abc")]
