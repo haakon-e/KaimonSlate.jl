@@ -2302,6 +2302,42 @@ end
         end
     end
 
+    @testset "a local target's parallelism layers over the machine setting" begin
+        # With no scheduler, nothing else decides how much of the machine a sweep takes, so the
+        # number has to come from somewhere in every case: the definition if it names one, else the
+        # setting, else a guess from the machine. And it has to reach the launcher — reading it back
+        # off `ExecLauncher` is what checks that, since a target carrying a number nobody passes on
+        # would satisfy every other assertion here.
+        old = Sweep.LOCAL_PROCS[]
+        try
+            mktempdir() do root
+                mk(; kw...) = Sweep.LocalTarget(; root, project = tempdir(), payload = "x", kw...)
+                maxproc(t) = Sweep.launcher_for(t).maxproc
+
+                Sweep.LOCAL_PROCS[] = 0
+                @test Sweep.local_procs() == Sweep.BatchLauncher.default_maxproc()
+                @test maxproc(mk()) == Sweep.local_procs()
+
+                Sweep.LOCAL_PROCS[] = 12
+                @test maxproc(mk()) == 12                  # the setting, for a target that says nothing
+                @test maxproc(mk(procs = 3)) == 3          # the definition outranks it
+                # The card says the RESOLVED width, since that is what explains the elapsed time.
+                @test occursin("12 at once", Sweep._target_line(mk()))
+                @test occursin("3 at once", Sweep._target_line(mk(procs = 3)))
+
+                # …and the definition's number arrives as a STRING out of the registry.
+                spec = Dict("name" => "box", "kind" => "local", "root" => root,
+                            "project" => tempdir(), "procs" => "6")
+                @test Sweep.cluster_args(spec).procs == 6
+                @test maxproc(Sweep.cluster(spec)) == 6
+                # Unset is 0, which is how "follow the setting" survives a round trip through JSON.
+                @test Sweep.cluster_args(Dict("name" => "b", "kind" => "local", "root" => root)).procs == 0
+            end
+        finally
+            Sweep.LOCAL_PROCS[] = old
+        end
+    end
+
     @testset "the option JSON writer covers what an ECharts option contains" begin
         @test Sweep._json(Dict("a" => 1, "b" => "x")) in
               ("{\"a\":1,\"b\":\"x\"}", "{\"b\":\"x\",\"a\":1}")

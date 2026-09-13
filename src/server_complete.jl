@@ -1625,8 +1625,11 @@ function _make_router(h::Hub)
     # Machine-level, like regions: a cluster definition describes a MACHINE, and every notebook that
     # references it by name reads the same one. (They used to live in each notebook's footer, which
     # meant two notebooks against one cluster held two copies that drifted.)
+    # `local_procs` rides along so the editor's placeholder can say what a target that sets nothing
+    # will actually get, rather than the word "auto".
     HTTP.register!(router, "GET", "/api/clusters", _ ->
-        _json(Dict("clusters" => ReportEngine.clusters_all())))
+        _json(Dict("clusters" => ReportEngine.clusters_all(),
+                   "local_procs" => ReportEngine.Sweep.local_procs())))
     HTTP.register!(router, "POST", "/api/clusters", req -> begin
         b = _body(req)
         name = strip(String(get(b, "name", "")))

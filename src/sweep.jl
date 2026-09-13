@@ -258,6 +258,7 @@ struct LocalTarget <: SweepTarget
     project::String
     payload::String
     chunk::Int
+    procs::Int                   # concurrent task processes; 0 = follow `local_procs()`
 end
 #
 # The task environment is PREPARED here, at construction: seeded from `parent` and instantiated once
@@ -270,11 +271,31 @@ end
 function LocalTarget(; root = joinpath(homedir(), ".cache", "kaimonslate", "sweeps"),
                      parent = dirname(Base.active_project()), env = :parent,
                      project = nothing,
-                     payload = joinpath(@__DIR__, "slatetask.jl"), chunk = 8)
+                     payload = joinpath(@__DIR__, "slatetask.jl"), chunk = 8, procs = 0)
     mkpath(String(root))
     proj = project === nothing ? task_env!(String(root), String(parent), env) : String(project)
-    LocalTarget(String(root), proj, String(payload), Int(chunk))
+    LocalTarget(String(root), proj, String(payload), Int(chunk), Int(procs))
 end
+
+# ── How much of this machine a local sweep may take ──────────────────────────────────────────
+# Each task is a WHOLE Julia loading the project, so the binding constraint is memory, not cores —
+# which is why the default is far below the core count and capped. A workstation with room to spare
+# can say so; a laptop should not have to discover the limit by swapping.
+#
+# Set from `slate.json` at boot (see `KaimonSlate.local_procs`); 0 means "work it out from this
+# machine". A cluster definition's own `procs` outranks it, the same layering `read_limit` uses.
+const LOCAL_PROCS = Ref(0)
+
+"""
+    local_procs() -> Int
+    local_procs(t::LocalTarget) -> Int
+
+How many task processes may run at once: the target's own `procs` if it names one, else the session
+setting, else what this machine can be expected to hold. The no-argument form is what a target that
+says nothing will get, which is what the cluster editor shows as its placeholder.
+"""
+local_procs() = LOCAL_PROCS[] > 0 ? LOCAL_PROCS[] : BatchLauncher.default_maxproc()
+local_procs(t::LocalTarget) = t.procs > 0 ? t.procs : local_procs()
 
 """
     ClusterTarget(host; kind, root, root_remote, project, payload, resources, chunk)
@@ -464,7 +485,7 @@ sweep cell names one with `cluster=`; call it directly only to inspect what a de
 """
 function cluster(spec::AbstractDict)
     a = cluster_args(spec)
-    a.kind == "local" && return LocalTarget(; a.root, a.parent, a.chunk)
+    a.kind == "local" && return LocalTarget(; a.root, a.parent, a.chunk, a.procs)
     return ClusterTarget(a.host; kind = Symbol(a.kind), a.root, a.root_remote, a.parent, a.payload,
                          a.chunk, a.account, a.qos, a.prologue, a.directives, a.resources)
 end
@@ -484,6 +505,8 @@ function cluster_args(spec::AbstractDict)
               "Kubernetes is a separate backend, not an option here.")
     root = get_("root")
     host = get_("host")
+    # Local only: how many task processes at once. 0 = follow the session setting.
+    procs = something(tryparse(Int, get_("procs", "0")), 0)
     root_remote = get_("root_remote")
     # A cluster reached over ssh has ONE store, and it is the cluster's — `root` is for a local run,
     # or for the unusual case of a store this notebook has mounted. Requiring both was a hangover
@@ -504,7 +527,7 @@ function cluster_args(spec::AbstractDict)
     # only for a site that stages it itself.
     payload = get_("payload")
     res = cluster_resources(spec)
-    return (; kind, name, root, parent, chunk, payload,
+    return (; kind, name, root, parent, chunk, payload, procs,
               root_remote = isempty(root_remote) ? root : root_remote,
               host, account = get_("account"), qos = get_("qos"),
               prologue = get_("prologue"), directives = get_("directives"),
@@ -645,7 +668,7 @@ job_root(t::ClusterTarget) = t.root_remote
 chunk_size(t::LocalTarget) = t.chunk
 chunk_size(t::ClusterTarget) = t.chunk
 
-launcher_for(::LocalTarget) = BatchLauncher.ExecLauncher()
+launcher_for(t::LocalTarget) = BatchLauncher.ExecLauncher(; maxproc = local_procs(t))
 # The client tools run through the host's session, like everything else — the launcher is handed the
 # runner rather than building its own ssh command. This is the ONE place a target's scheduler is
 # consulted, which is what makes a third one a new `Launcher` and nothing else.
@@ -3265,7 +3288,9 @@ function _target_line(t::ClusterTarget)
     push!(bits, "$(t.chunk)/job")
     return join(bits, " · ")
 end
-_target_line(t::LocalTarget) = "local · $(t.chunk)/job"
+# The resolved number, not `t.procs`: a target that names none still runs at some width, and that is
+# the figure that explains how long the run is taking.
+_target_line(t::LocalTarget) = "local · $(local_procs(t)) at once · $(t.chunk)/job"
 
 function _unit_grid(io, r::ShardedResult)
     n = length(r.rows)

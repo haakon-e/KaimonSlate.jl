@@ -527,6 +527,31 @@ project is nothing over a LAN and painful over hotel wifi. 0 disables the warnin
 transfer_warn_mb()::Float64 =
     something(tryparse(Float64, string(get(_slate_config(), "transfer_warn_mb", ""))), 100.0)
 
+"""
+    local_procs() -> Int
+
+How many task processes a LOCAL sweep may run at once, for this machine.
+
+Each task is a whole Julia loading the project, so what binds is memory rather than cores — which is
+why the built-in default is far below the core count. A workstation with room to spare says so here
+once, instead of every cluster definition repeating it. `0` means "work it out from this machine".
+
+A local cluster definition's own `procs` outranks this, and that is the right order: the setting is a
+fact about the machine, the definition is a fact about the work.
+"""
+local_procs()::Int =
+    something(tryparse(Int, string(get(_slate_config(), "local_procs", ""))), 0)
+
+"Persist how many processes a local sweep may run at once. `0` restores the machine default."
+function set_local_procs!(n::Integer)
+    v = max(0, Int(n))
+    ReportEngine.Sweep.LOCAL_PROCS[] = v
+    cfg = _slate_config()
+    v == 0 ? delete!(cfg, "local_procs") : (cfg["local_procs"] = v)
+    _persist_slate_config!(cfg)
+    return v
+end
+
 "Persist the provisioning-size warning threshold (MB). `0` turns the warning off."
 function set_transfer_warn_mb!(mb::Real)
     v = max(0.0, Float64(mb))
@@ -650,6 +675,7 @@ function _load_slate_config!()
     isempty(ef) || (ReportEngine.WORKER_EXTRA_FLAGS[] = ef)
     ReportEngine.MEMO_CAP_GB[] = memo_cap_gb()
     ReportEngine.TRANSFER_WARN_MB[] = transfer_warn_mb()
+    ReportEngine.Sweep.LOCAL_PROCS[] = local_procs()
     ReportEngine.BLOB_CHUNK_MB[] = blob_chunk_mb()
     ReportEngine.CARRY_MAX_S[] = carry_max_s()
     ReportEngine.XFER_CONFIRM_S[] = xfer_confirm_s()

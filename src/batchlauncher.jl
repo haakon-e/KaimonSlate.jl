@@ -240,7 +240,10 @@ struct ExecLauncher <: Launcher
 end
 # The binding constraint is MEMORY, not cores: every task process is a separate Julia that loads
 # the project, so this is deliberately far below the core count. Raise it only with an eye on RSS.
-ExecLauncher(; maxproc::Int = clamp(Sys.CPU_THREADS ÷ 3, 1, 4)) = ExecLauncher(maxproc)
+# A sweep picks its number through `Sweep.local_procs`, which falls back to this when neither the
+# target nor the machine setting names one.
+default_maxproc() = clamp(Sys.CPU_THREADS ÷ 3, 1, 4)
+ExecLauncher(; maxproc::Int = default_maxproc()) = ExecLauncher(maxproc)
 
 _jobdir(root) = joinpath(root, "jobs")
 _jobfile(root, name) = joinpath(_jobdir(root), name)

@@ -35,7 +35,19 @@ cell submits to:
 | **Partition / walltime / cpus / mem** | what each job asks for. A cell may override any of them. |
 | **Project** | the folder with the `Project.toml` the units run in. |
 | **Chunk** | how many sweep units ride one scheduler job. |
+| **At once** | `local` only: how many tasks run in parallel. Blank follows the machine setting below. |
 | **Prologue** | shell run before every job — `module load julia`, usually. |
+
+A `local` target has no scheduler deciding how much of the machine it may take, so Slate does. Each
+task is a whole Julia loading the project, which makes memory rather than cores the binding
+constraint, and the default is well under the core count for that reason. A workstation with room to
+spare can say so once for every local target on this machine:
+
+```julia
+KaimonSlate.set_local_procs!(8)     # 0 restores the machine default
+```
+
+A target's own **At once** outranks it.
 
 The **name is the contract, not the address**. A notebook says `cluster=hpc`, and each machine that
 opens it resolves that against its own registry — which is what lets the same notebook run against a

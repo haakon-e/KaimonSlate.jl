@@ -33,6 +33,7 @@ Machine-wide settings live in `slate.json` in your config home. Changes apply on
 | `worker_extra_flags` | default extra Julia flags for workers |
 | `memo_cap_gb` | the [memoization](memoization.md) store's size cap |
 | `blob_chunk_mb` | chunk size for binary transfers |
+| `local_procs` | how many tasks a [local sweep](clusters.md) runs at once; `0` works it out from this machine |
 | `carry_max_s`, `xfer_confirm_s` | [region](regions.md) transfer thresholds |
 | `remote` | per-host timing overrides, below |
 | `catalog` | point the [Extensions gallery](extension-gallery.md) at a fork or mirror |

@@ -13,6 +13,7 @@ import { schedInfo, loadScheduler } from './stores.js';
 import { sessions, loadSessions, openSessions } from './sessions.js';
 
 export const clusters = signal([]);
+const procsDefault = signal(0);      // what a local target that names no `procs` gets on this machine
 const editing = signal(null);        // the target being edited (null = the "new" form)
 const cmsg = signal(null);           // {text, err}
 const more = signal(false);          // show the set-once fields (chunk, account, prologue, …)
@@ -23,16 +24,19 @@ const confirmP = (msg, ok, cls) => (window.confirmDark ? window.confirmDark(msg,
 const kName = signal(''), kKind = signal('slurm'), kHost = signal(''), kRootRemote = signal(''),
       kProject = signal(''), kPayload = signal(''), kPartition = signal(''), kWalltime = signal(''),
       kCpus = signal(''), kMem = signal(''), kChunk = signal(''), kAccount = signal(''),
-      kRoot = signal(''), kPrologue = signal(''), kNote = signal('');
+      kRoot = signal(''), kPrologue = signal(''), kNote = signal(''), kProcs = signal('');
 // Every key the form above collects. The registry is deliberately schema-light — the fields a
 // scheduler wants are the scheduler's business — so anything NOT in here is carried through a save
 // untouched rather than dropped by an editor that has not heard of it.
 const FORM_KEYS = ['name', 'kind', 'host', 'root', 'root_remote', 'project', 'payload', 'partition',
-                   'walltime', 'cpus', 'mem', 'chunk', 'account', 'prologue', 'note'];
+                   'walltime', 'cpus', 'mem', 'chunk', 'account', 'prologue', 'note', 'procs'];
 
 export function loadClusters() {
   return fetch('/api/clusters').then(r => r.json())
-    .then(d => { clusters.value = (d && d.clusters) || []; }).catch(() => {});
+    .then(d => {
+      clusters.value = (d && d.clusters) || [];
+      procsDefault.value = (d && d.local_procs) || 0;
+    }).catch(() => {});
 }
 
 function seed(c) {
@@ -44,7 +48,7 @@ function seed(c) {
   kProject.value = g('project'); kPayload.value = g('payload');
   kPartition.value = g('partition'); kWalltime.value = g('walltime'); kCpus.value = g('cpus');
   kMem.value = g('mem'); kChunk.value = g('chunk'); kAccount.value = g('account');
-  kPrologue.value = g('prologue'); kNote.value = g('note');
+  kPrologue.value = g('prologue'); kNote.value = g('note'); kProcs.value = g('procs');
   if (kHost.value && kKind.value !== 'local') { loadScheduler(kHost.value); loadSessions(); }
 }
 
@@ -58,6 +62,7 @@ export function clusterSummary(c) {
   if (!c) return '';
   const k = c.kind || 'slurm';
   const bits = [k === 'local' ? 'here' : (c.host || 'no host yet')];
+  if (k === 'local' && c.procs) bits.push(c.procs + ' at once');
   if (c.partition) bits.push(c.partition);
   if (c.walltime) bits.push('≤' + c.walltime);
   if (c.cpus) bits.push(c.cpus + ' cpu');
@@ -79,6 +84,7 @@ function save() {
   put('partition', kPartition.value); put('walltime', kWalltime.value); put('cpus', kCpus.value);
   put('mem', kMem.value); put('chunk', kChunk.value); put('account', kAccount.value);
   put('prologue', kPrologue.value); put('note', kNote.value);
+  if (kKind.value === 'local') put('procs', kProcs.value);
   cmsg.value = { text: 'Saving…' };
   fetch('/api/clusters', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     .then(r => r.json()).then(d => {
@@ -167,7 +173,15 @@ export function Clusters() {
         ${isLocal ? html`<span class="pddim">runs here, no scheduler</span>` : null}</div>
       ${isLocal ? html`
         <div class="rpprow"><label>Store</label>
-          <input class="rpproot" autocomplete="off" spellcheck="false" placeholder="/path/to/store  (on THIS machine)" value=${kRoot.value} onInput=${ev => kRoot.value = ev.target.value}/></div>`
+          <input class="rpproot" autocomplete="off" spellcheck="false" placeholder="/path/to/store  (on THIS machine)" value=${kRoot.value} onInput=${ev => kRoot.value = ev.target.value}/></div>
+        ${/* With no scheduler there is nothing else deciding how much of the machine a sweep takes.
+              Each task is a whole Julia loading the project, so this is a memory question rather than
+              a core-count one — hence a default well under the core count, overridable here. */ null}
+        <div class="rpprow"><label>At once</label>
+          <input class="rppn" type="text" inputmode="numeric" autocomplete="off"
+                 placeholder=${procsDefault.value || 'auto'} title="how many tasks run in parallel on this machine"
+                 value=${kProcs.value} onInput=${ev => kProcs.value = ev.target.value}/>
+          <span class="pddim">tasks in parallel; blank = the Slate setting${procsDefault.value ? ' (' + procsDefault.value + ')' : ''}</span></div>`
       : html`
         <div class="rpprow"><label>Login host</label>
           <input class="rpppre" autocomplete="off" spellcheck="false" placeholder="ssh host you submit from"
