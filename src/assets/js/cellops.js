@@ -122,6 +122,22 @@ function _rebaseline(id, src) {
   const st = window.slateStore;
   if (st && st.clearEdited) st.clearEdited(id);
 }
+// The same, for an action that rewrites SEVERAL cells at once and hands back the whole notebook:
+// undo, redo, Replace All, restoring a version from the timeline. Each of those is this tab asking
+// for the change, so the incoming source is the answer and there is nothing to reconcile — but the
+// per-cell diff cannot tell them from an agent's edit, and accused one.
+//
+// Only cells that actually MOVED are touched, so an open editor the action did not rewrite keeps
+// its uncommitted text and still reconciles properly if something external lands on it.
+function rebaselineAll(state) {
+  for (const c of (state && state.cells) || []) {
+    const cur = (typeof srcMap !== 'undefined' && srcMap) ? srcMap[c.id] : undefined;
+    if (cur !== c.source) _rebaseline(c.id, c.source);
+  }
+  return state;
+}
+window.slateRebaseline = _rebaseline;
+window.slateRebaselineAll = rebaselineAll;
 // Split a code cell at the editor cursor into two cells.
 async function splitCell(id, view) {
   const v = view || editors[id]; if (!v) return;
@@ -245,8 +261,8 @@ async function toggleType(id, kind)  {
   if (window.editors[id]) body.source = edText(id);
   renderAll(await api('POST', '/api/cell-type/' + id, body));
 }
-async function undoNb() { const s = await api('POST', '/api/undo'); renderAll(s); if (s && s.undid) toast('Undid ' + s.undid, 2000); }
-async function redoNb() { const s = await api('POST', '/api/redo'); renderAll(s); if (s && s.redid) toast('Redid ' + s.redid, 2000); }
+async function undoNb() { const s = await api('POST', '/api/undo'); renderAll(rebaselineAll(s)); if (s && s.undid) toast('Undid ' + s.undid, 2000); }
+async function redoNb() { const s = await api('POST', '/api/redo'); renderAll(rebaselineAll(s)); if (s && s.redid) toast('Redid ' + s.redid, 2000); }
 // ── Cell clipboard: copy / cut / paste (command-mode c / x / v) ────────────────
 // An internal clipboard of {kind, source} cells, mirrored to localStorage so you can copy
 // cells in one notebook tab and paste them into another. The .jl source is ALSO written to the

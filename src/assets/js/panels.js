@@ -246,7 +246,12 @@ async function histSelect(hash) {
 }
 async function histRestore(hash) {
   const st = await api('POST', '/api/history/restore', { hash });
-  if (st && st.cells) { renderAll(st); lastVersion = st.version; }
+  // Rebaseline before rendering: restoring a version is this tab rewriting its own cells, so an
+  // open editor over one of them has nothing to reconcile — see `slateRebaselineAll`.
+  if (st && st.cells) {
+    window.slateRebaselineAll && window.slateRebaselineAll(st);
+    renderAll(st); lastVersion = st.version;
+  }
   await loadHistory(); histSelect(histCurrent);
 }
 async function histReplay() {
