@@ -1475,7 +1475,7 @@ stacked.
     ds                      # schema, parts, rows, size — no I/O
     ds[1:1000]              # a bounded slice
     ds[1:1000, (:t, :e)]    # …and only these columns
-    scan(ds; between = (:e, 3, Inf), where = r -> r.ok, limit = 10_000)
+    Sweep.scan(ds; between = (:e, 3, Inf), where = r -> r.ok, limit = 10_000)
 
 A unit that returned one row contributes one; a unit that returned many contributes all of them; a
 unit that has not landed contributes one row of `missing`, so the holes are where the work still is.
@@ -1757,7 +1757,8 @@ function Base.show(io::IO, ::MIME"text/plain", ds::Dataset)
         # what they are called. Saying so beats a dataset that looks like it holds only parameters.
         isempty(ds.columns) &&
             println(io, "   (no value columns yet — no unit has said what they are called)")
-        println(io, "   ds[1:1000] for rows · scan(ds; …) to filter · query_cost(ds) to price it")
+        println(io, "   ds[1:1000] for rows · Sweep.scan(ds; …) to filter · ",
+                "Sweep.query_cost(ds) to price it")
     else
         d = get(ds.parts[1].index, "dims", Int[])
         println(io, "   each part ", join(d, "×"), " ", String(get(ds.parts[1].index, "eltype", "")))
@@ -1893,7 +1894,7 @@ function load(ds::Dataset, rows::AbstractUnitRange; select = nothing,
         throw(BoundsError("rows $(rows) outside 1:$(n)"))
     length(rows) <= max_rows ||
         error("$(length(rows)) rows is over the $(max_rows)-row slice cap — narrow the range, " *
-              "use `scan(ds; limit = …)` to stream a filtered subset, or raise it deliberately " *
+              "use `Sweep.scan(ds; limit = …)` to stream a filtered subset, or raise it deliberately " *
               "with `Sweep.load(ds, rows; max_rows = …)`")
     want = select === nothing ? nothing : Symbol[Symbol(s) for s in select]
     if want !== nothing
@@ -1925,7 +1926,7 @@ function load(ds::Dataset, rows::AbstractUnitRange; select = nothing,
         end
         want <= cap || error(
             "this read would bring back $(_bytes(want)), over the $(_bytes(cap)) limit for one " *
-            "read — narrow the range, project fewer columns, use `scan(ds; …)` to filter it " *
+            "read — narrow the range, project fewer columns, use `Sweep.scan(ds; …)` to filter it " *
             "down, or lift the guard: `Sweep.load(ds, rows; max_bytes = …)` for this call, " *
             "`r.read_limit = …` for this sweep, `Sweep.read_limit!(…)` for the session " *
             "(`nothing` anywhere means no limit)")

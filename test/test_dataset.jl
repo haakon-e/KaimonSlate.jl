@@ -245,6 +245,14 @@ const MS = RE.MemoStore
             ds = RE.Sweep.refresh!(r).dataset
             @test length(ds) == 1000
 
+            # What the dataset tells you to type has to be typeable. `scan` and `query_cost` are
+            # deliberately NOT exported — the notebook namespace is the author's, and a name that
+            # generic would shadow something of theirs — so every hint has to carry the module or it
+            # is an UndefVarError with the dataset's own words in it.
+            hint = sprint(show, MIME"text/plain"(), ds)
+            @test occursin("Sweep.scan(ds", hint) && occursin("Sweep.query_cost(ds", hint)
+            @test !occursin(r"(?<!\.)\bscan\(ds", hint) && !occursin(r"(?<!\.)\bquery_cost\(ds", hint)
+
             # The extension is loaded, so the dataset IS a table to the ecosystem.
             @test Tables.istable(typeof(ds))
             @test Tables.columnaccess(typeof(ds))
