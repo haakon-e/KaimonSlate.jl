@@ -4499,7 +4499,12 @@ function _collect_captures(mod::Module, names, param::Symbol)
         n === param && continue
         isdefined(mod, n) || continue
         v = try; getfield(mod, n); catch; continue; end
-        (v isa Function || v isa Module || v isa Type) && continue
+        # A function, module or type cannot travel as a value, and neither can an open STREAM: in a
+        # worker `stdout` is a capture object belonging to the worker's own module, so capturing it
+        # ships a type the task process has never heard of and the unit dies in `deserialize_module`
+        # naming a module the author never mentioned. Left alone, `stdout` resolves on the node to
+        # the node's own — which is what a body writing to it meant.
+        (v isa Function || v isa Module || v isa Type || v isa IO) && continue
         caps[n] = v
     end
     return caps
