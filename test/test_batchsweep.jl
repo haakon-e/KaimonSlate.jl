@@ -871,13 +871,13 @@ end
 
             # Submitting is the explicit act, and it sticks.
             Sweep.handle_action(t, r.run, r.params, r.keys, "submit")
-            @test BS.is_armed(root, r.run)
+            @test BS.is_started(root, r.run)
             @test Sweep.refresh!(r).state !== :ready
 
             # Reset clears the results AND the arming: ready again, not running again.
             for c in BS.sweep_chunks(root, r.run); SlateTask.run_chunk(root, c); end
             Sweep.handle_action(t, r.run, r.params, r.keys, "reset")
-            @test !BS.is_armed(root, r.run)
+            @test !BS.is_started(root, r.run)
             @test Sweep.refresh!(r).state === :ready && r.done == 0
         end
     end
@@ -962,7 +962,7 @@ end
             end
             l = BL.ExecLauncher()
             acts() = first.(Sweep.action_list(BS.plan(root, r.run; launcher = l),
-                                              BS.is_armed(root, r.run)))
+                                              BS.is_started(root, r.run)))
 
             # Nothing asked for and nothing done: reset would be a no-op, so it is not offered.
             @test acts() == ["submit"]
@@ -976,7 +976,7 @@ end
             # …and it really does clear, mid-flight, back to ready rather than stopped.
             Sweep.handle_action(t, r.run, r.params, r.keys, "reset")
             @test Sweep.refresh!(r).done == 0
-            @test r.state === :ready && !BS.is_armed(root, r.run)
+            @test r.state === :ready && !BS.is_started(root, r.run)
             @test !BS.is_cancelled(root, r.run)     # cleared, not stopped — submitting works again
             @test acts() == ["submit"]
 
@@ -1623,7 +1623,7 @@ end
     end
 
     @testset "running the cell never submits" begin
-        # It read the ARMED marker to decide, so a cell run resubmitted a sweep somebody had armed
+        # It read the STARTED marker to decide, so a cell run resubmitted a sweep somebody had started
         # at some point. A worker restart re-runs every cell, so reopening a notebook could start
         # hundreds of units nobody had asked for again — and locally there is no scheduler between
         # that and the machine.
@@ -1635,24 +1635,24 @@ end
             @test isempty(BS.known_submissions(root))          # nothing submitted, as before
 
             # ARM it, as the card's Submit does, then run the cell again.
-            BS.arm!(root, r.run)
+            BS.start!(root, r.run)
             before = length(BS.known_submissions(root))
             Sweep.run_sweep(t, Sweep.paramgrid(x = 1:4), body)
             @test length(BS.known_submissions(root)) == before  # …and it still submitted nothing
 
-            # The card's poll is what advances an armed sweep — that is where watching belongs.
+            # The card's poll is what advances a started sweep — that is where watching belongs.
             Sweep.status_payload(t, r.run, r.params, r.keys; advance = true)
             @test length(BS.known_submissions(root)) > before
 
             # An explicit `submit = true` — a standalone script, with no card to ask from — still works.
             r2 = Sweep.run_sweep(t, Sweep.paramgrid(y = 1:2), "p -> p.y"; submit = true)
-            @test BS.is_armed(root, r2.run)
+            @test BS.is_started(root, r2.run)
             @test any(cs -> any(in(Set(BS.sweep_chunks(root, r2.run))), cs),
                       values(BS.known_submissions(root)))
         end
     end
 
-    @testset "at most one unarmed run per cell" begin
+    @testset "at most one unstarted run per cell" begin
         # A run is keyed by body + setup + captures + grid, so every edit mints a new one and the
         # old — which nobody ever asked to run — is left behind holding a blob per parameter point.
         # An afternoon of adjusting a constant filled the store with descriptors for work that was
@@ -1674,12 +1674,12 @@ end
             @test BS.cell_runs(root, "sweepcell") == [a.run]
             b = mk(2)                                  # an edited body ⇒ a different run
             @test b.run != a.run
-            # …and the one nobody armed is gone rather than left behind.
+            # …and the one nobody started is gone rather than left behind.
             @test MemoStore.read_manifest(root, a.run) === nothing
             @test MemoStore.read_manifest(root, b.run) !== nothing
 
             # An ARMED run survives: it may have work queued even with nothing landed.
-            BS.arm!(root, b.run)
+            BS.start!(root, b.run)
             c = mk(3)
             @test MemoStore.read_manifest(root, b.run) !== nothing
             @test MemoStore.read_manifest(root, c.run) !== nothing
@@ -1689,7 +1689,7 @@ end
             d = mk(4)
             @test MemoStore.read_manifest(root, c.run) !== nothing
 
-            # Another CELL's unarmed runs are never touched.
+            # Another CELL's unstarted runs are never touched.
             other = task_local_storage(:slate_cell, "othercell") do
                 Sweep.run_sweep(t, Sweep.paramgrid(x = 1:3), "p -> p.x"; cell = "othercell")
             end

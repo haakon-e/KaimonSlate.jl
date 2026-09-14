@@ -128,7 +128,7 @@ Only the manifests — blobs are content-addressed and shared, so releasing the 
 gc CAN reclaim it.
 
 Nothing here asks whether the run is live; callers decide that. `Sweep.forget_run!` is the one with
-the safety check, and the automatic rule only ever passes runs that were never armed.
+the safety check, and the automatic rule only ever passes runs that were never started.
 """
 function forget_sweep!(root::AbstractString, sweep::AbstractString)
     n = 0
@@ -248,29 +248,38 @@ function resume!(root::AbstractString, sweep::AbstractString)
     return true
 end
 
-# ── Arming ───────────────────────────────────────────────────────────────────────────────────
-# Durable state, stored beside the cancellation marker, recording that someone asked for this
-# sweep's work to be submitted. `reconcile!` is the mechanism and stays free of it; the decision to
-# spend an allocation belongs to the caller (see sweep.jl), which reads this to choose whether a
-# given reconcile may submit. Durable so a sweep left running survives a restart and keeps going.
-armed_path(root, sweep) = joinpath(jobs_dir(root), sweep * ".armed")
+# ── Starting ─────────────────────────────────────────────────────────────────────────────────
+# Durable state, stored beside the cancellation marker, recording that someone approved spending on
+# this sweep. `reconcile!` is the mechanism and stays free of it; the decision to spend an
+# allocation belongs to the caller (see sweep.jl), which reads this to choose whether a given
+# reconcile may submit. Durable so a sweep left running survives a restart and keeps going.
+#
+# Three states, and the marker is the line between the last two: running the cell PREPARES a sweep
+# (descriptors written, plan computed, nothing spent — `display_state` calls that `ready`),
+# approving the submit STARTS it, and from then on the card's poll may submit what is missing until
+# it is cancelled.
+started_path(root, sweep) = joinpath(jobs_dir(root), sweep * ".started")
+# The name this marker had before the three states were named. Read, never written, so a sweep that
+# was already running when Slate was upgraded keeps running; delete once no store holds one.
+_legacy_started_path(root, sweep) = joinpath(jobs_dir(root), sweep * ".armed")
 
-is_armed(root::AbstractString, sweep::AbstractString) = isfile(armed_path(root, sweep))
+is_started(root::AbstractString, sweep::AbstractString) =
+    isfile(started_path(root, sweep)) || isfile(_legacy_started_path(root, sweep))
 
-"Allow this sweep to submit work. Returns whether it was newly armed."
-function arm!(root::AbstractString, sweep::AbstractString)
-    isfile(armed_path(root, sweep)) && return false
+"Authorise this sweep to submit work. Returns whether it was newly started."
+function start!(root::AbstractString, sweep::AbstractString)
+    is_started(root, sweep) && return false
     mkpath(jobs_dir(root))
-    write(armed_path(root, sweep), string(round(Int, time())))
+    write(started_path(root, sweep), string(round(Int, time())))
     return true
 end
 
-"Put a sweep back to ready-but-not-submitting. Returns whether it was armed."
-function disarm!(root::AbstractString, sweep::AbstractString)
-    p = armed_path(root, sweep)
-    isfile(p) || return false
-    rm(p; force = true)
-    return true
+"Put a sweep back to ready-but-not-submitting. Returns whether it was started."
+function stop!(root::AbstractString, sweep::AbstractString)
+    was = is_started(root, sweep)
+    rm(started_path(root, sweep); force = true)
+    rm(_legacy_started_path(root, sweep); force = true)
+    return was
 end
 
 "Every submission with an index file on disk, as `name => chunks`. One directory listing."

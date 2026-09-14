@@ -802,15 +802,15 @@ Base.eltype(::Type{ShardedResult}) = NamedTuple
 # property that mutates on read is a trap.
 const _DERIVED = (:state, :total, :done, :ok, :failed, :pending, :fraction, :percent,
                   :eta, :rate, :idle, :stalled_for, :blocked, :settled,
-                  :results, :records, :summaries, :errors, :hosts, :bytes, :armed, :dataset)
+                  :results, :records, :summaries, :errors, :hosts, :bytes, :started, :dataset)
 
 function Base.getproperty(r::ShardedResult, s::Symbol)
     s in fieldnames(ShardedResult) && return getfield(r, s)
     p, t = getfield(r, :plan), getfield(r, :telemetry)
     rows = getfield(r, :rows)
-    s === :state      && return display_state(p, BatchSweep.is_armed(store_root(getfield(r, :target)),
+    s === :state      && return display_state(p, BatchSweep.is_started(store_root(getfield(r, :target)),
                                                                      getfield(r, :run)))
-    s === :armed      && return BatchSweep.is_armed(store_root(getfield(r, :target)), getfield(r, :run))
+    s === :started      && return BatchSweep.is_started(store_root(getfield(r, :target)), getfield(r, :run))
     s === :total      && return p.shards_total
     s === :done       && return p.shards_done
     s === :ok         && return p.shards_ok
@@ -1145,11 +1145,11 @@ function cluster_status(name::AbstractString = "";
             # NOT `t`: that is the target, and everything after this loop still needs it.
             tel = BatchSweep.telemetry(root, sw; launcher = l, plan = p)
             push!(rows, (; sweep = sw, created,
-                           state = display_state(p, BatchSweep.is_armed(root, sw)),
+                           state = display_state(p, BatchSweep.is_started(root, sw)),
                            total = p.shards_total, done = p.shards_done,
                            ok = p.shards_ok, failed = p.shards_failed,
                            missing = p.shards_missing, blocked = p.blocked,
-                           armed = BatchSweep.is_armed(root, sw),
+                           started = BatchSweep.is_started(root, sw),
                            rate = tel.rate_per_s, eta = tel.eta_s,
                            idle = BatchSweep.stalled_for(tel),
                            hosts = unique(String[r.ran_on for r in BatchSweep.results(root, sw)
@@ -1276,7 +1276,7 @@ sync_in!(t::ClusterTarget) = isempty(t.host) ? true : pull_meta!(remote_store(t)
 # find work this one started, and the counts are supposed to outlive the hub that made them. But a
 # card polls this on a timer, so the round trip is worth paying only when something changed. The
 # attempt counts are the signal, because they move on exactly the submissions that went out.
-# Whether this target can be reached at all. A sweep armed against a cluster nobody has signed in to
+# Whether this target can be reached at all. A sweep started against a cluster nobody has signed in to
 # WAITS rather than failing: submitting is the only thing a sign-in gates, and the card already says
 # what is missing. It goes out on the next poll after someone signs in.
 _reachable(t::SweepTarget) = (h = target_host(t); isempty(h) || connected(h))
@@ -2705,8 +2705,8 @@ first.
 """
 function forget_run!(target::SweepTarget, run::AbstractString)
     root = store_root(target)
-    BatchSweep.is_armed(root, String(run)) &&
-        error("sweep $(run) is armed — it may have work queued. `Sweep.cancel!` it first, " *
+    BatchSweep.is_started(root, String(run)) &&
+        error("sweep $(run) was started — it may have work queued. `Sweep.cancel!` it first, " *
               "then release it.")
     n = BatchSweep.forget_sweep!(root, String(run))
     sync_out!(target)
@@ -2714,7 +2714,7 @@ function forget_run!(target::SweepTarget, run::AbstractString)
 end
 forget_run!(r::ShardedResult) = forget_run!(getfield(r, :target), getfield(r, :run))
 
-# Every run this CELL minted that was never armed and has nothing landed, except the one just
+# Every run this CELL minted that was never started and has nothing landed, except the one just
 # written. Phrased as "every" rather than "the previous one" so it is idempotent and clears a
 # backlog that accumulated before the rule existed, not only the run immediately before this.
 function _forget_stale_runs(root::AbstractString, keep::AbstractString, cell::AbstractString)
@@ -2725,7 +2725,7 @@ function _forget_stale_runs(root::AbstractString, keep::AbstractString, cell::Ab
     for sw in BatchSweep.cell_runs(root, cell)
         sw == keep && continue
         try
-            BatchSweep.is_armed(root, sw) && continue
+            BatchSweep.is_started(root, sw) && continue
             # Anything that RAN — even to a failure — has a manifest and is kept.
             p = BatchSweep.plan(root, sw)
             p.shards_done == 0 || continue
@@ -2959,13 +2959,13 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
                                                             "text" => h.text) for h in r.hits])
     end
     if action == "submit"
-        BatchSweep.arm!(root, run)
+        BatchSweep.start!(root, run)
     elseif action == "cancel"
         BatchSweep.cancel!(root, run, l)
-        BatchSweep.disarm!(root, run)
+        BatchSweep.stop!(root, run)
     elseif action == "resume"
         BatchSweep.resume!(root, run)
-        BatchSweep.arm!(root, run)
+        BatchSweep.start!(root, run)
     elseif action == "retry"
         # Same reason as reset: dropping a failed unit's manifest only in the mirror leaves it on
         # the cluster, and the next sync brings the failure straight back.
@@ -2981,9 +2981,9 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
         BatchSweep.clear_attempts!(root, run)
         forget_results!(target, keys)
         # Cleared and READY, not stopped: drop the cancellation `cancel!` just wrote, and leave the
-        # sweep unarmed so submitting it again is a separate decision.
+        # sweep stopped so submitting it again is a separate decision.
         BatchSweep.resume!(root, run)
-        BatchSweep.disarm!(root, run)
+        BatchSweep.stop!(root, run)
     else
         error("unknown sweep action: $(action)")
     end
@@ -3017,11 +3017,11 @@ function status_payload(target::SweepTarget, run::AbstractString, params, keys;
     # whose units are failing, which is the case the waves exist for.
     # …and it only submits for a sweep that has been ARMED, so a card left open on a sweep nobody
     # asked to run cannot start it.
-    armed = BatchSweep.is_armed(root, run)
-    p = advance ? reconcile_and_sync!(target, run, l; submit = armed && _reachable(target)) :
+    started = BatchSweep.is_started(root, run)
+    p = advance ? reconcile_and_sync!(target, run, l; submit = started && _reachable(target)) :
                   BatchSweep.plan(root, run; launcher = l)
     t = BatchSweep.telemetry(root, run; launcher = l, plan = p)
-    _ds = display_state(p, armed)
+    _ds = display_state(p, started)
     # Tile COLOURS, not per-unit statuses: the browser patches tiles by index, and computing the
     # colour here is what keeps the live grid identical to the one the cell rendered. It also keeps
     # the payload flat — a few hundred short strings whatever the sweep's size.
@@ -3046,7 +3046,7 @@ function status_payload(target::SweepTarget, run::AbstractString, params, keys;
         # The controls that apply RIGHT NOW, so the card's buttons track its state instead of
         # freezing at whatever was true when the cell last ran.
         "actions" => [Any[a, l] for (a, l) in
-                      action_list(p, armed; jobs = !isempty(run_jobs(target, run)))],
+                      action_list(p, started; jobs = !isempty(run_jobs(target, run)))],
         # Why it stopped. Carried on every poll because a sweep that blocks WHILE being watched
         # must explain itself then, not only if someone happens to re-run the cell afterwards.
         "why" => _signin_html(target) * _why_html(p),
@@ -3528,8 +3528,8 @@ end
 function Base.show(io::IO, ::MIME"text/html", r::ShardedResult)
     p, t = r.plan, r.telemetry
     frac = BatchSweep.fraction(p)
-    armed = BatchSweep.is_armed(store_root(r.target), r.run)
-    st = display_state(p, armed)
+    started = BatchSweep.is_started(store_root(r.target), r.run)
+    st = display_state(p, started)
     col = get(_STATE_COLOR, st, "var(--dim,#6a7090)")
 
     # `data-sw` hooks mark every part the live script patches; without them it would have to
@@ -3636,13 +3636,13 @@ end
 # re-running the cell.
 # What the card SAYS a sweep is. `Plan.state` describes the store and the scheduler; this adds the
 # one thing only the notebook knows — whether anyone has asked for the work. A sweep with units
-# outstanding that has not been armed is READY, not pending: nothing is queued and nothing will be
+# outstanding that has not been started is READY, not pending: nothing is queued and nothing will be
 # until it is submitted.
-display_state(p::BatchSweep.Plan, armed::Bool) =
-    (!armed && p.state === :pending) ? :ready : p.state
+display_state(p::BatchSweep.Plan, started::Bool) =
+    (!started && p.state === :pending) ? :ready : p.state
 
-function action_list(p::BatchSweep.Plan, armed::Bool = true; jobs::Bool = false)
-    st = display_state(p, armed)
+function action_list(p::BatchSweep.Plan, started::Bool = true; jobs::Bool = false)
+    st = display_state(p, started)
     acts = Tuple{String,String}[]
     if st === :ready
         # The one control that spends anything, and it says how much before you press it.
@@ -3663,7 +3663,7 @@ function action_list(p::BatchSweep.Plan, armed::Bool = true; jobs::Bool = false)
     # history, or work in flight. Offering it only once a sweep had settled stranded the case you
     # most want out of: a long run that is half done and going wrong. It is confirmed in the browser
     # rather than rationed here.
-    (p.shards_done > 0 || armed || p.state in (:cancelled, :blocked, :exhausted)) &&
+    (p.shards_done > 0 || started || p.state in (:cancelled, :blocked, :exhausted)) &&
         push!(acts, ("reset", "Reset"))
     return acts
 end
@@ -3676,7 +3676,7 @@ function _actions(io, r::ShardedResult)
     # The container is emitted even when empty: the live script repopulates it, and a card that
     # rendered with nothing to offer must still be able to grow a Retry when a unit fails.
     print(io, "<div data-sw='acts' style='display:flex;gap:6px;margin-top:10px'>")
-    for (act, label) in action_list(r.plan, BatchSweep.is_armed(store_root(r.target), r.run);
+    for (act, label) in action_list(r.plan, BatchSweep.is_started(store_root(r.target), r.run);
                                     jobs = !isempty(run_jobs(r)))
         print(io, "<button data-sw-do='", act, "' style='", _BTN_STYLE, "'>", _esc(label), "</button>")
     end
@@ -3694,7 +3694,7 @@ function _live_script(io, r::ShardedResult)
     # offers Retry and Reset, and a card that started no timer must not be inert.
     # Nothing to watch on a sweep that is finished, stopped, or not yet submitted.
     poll = !(BatchSweep.is_settled(r.plan) || BatchSweep.is_stuck(r.plan) ||
-             display_state(r.plan, BatchSweep.is_armed(store_root(r.target), r.run)) === :ready)
+             display_state(r.plan, BatchSweep.is_started(store_root(r.target), r.run)) === :ready)
     id = r.run
     print(io, """
     <script>
@@ -3709,7 +3709,7 @@ function _live_script(io, r::ShardedResult)
       // accurately before the first poll lands.
       var last = { done: $(r.plan.shards_done), total: $(r.plan.shards_total),
                    missing: $(r.plan.shards_missing), host: "$(_esc(target_host(r.target)))",
-                   state: "$(display_state(r.plan, BatchSweep.is_armed(store_root(r.target), r.run)))" };
+                   state: "$(display_state(r.plan, BatchSweep.is_started(store_root(r.target), r.run)))" };
 
       // "~3h12m left" is a number you then have to add to the clock. "done ~17:22" is one you can
       // act on. Both, because the first says whether to wait and the second says what to do instead.
@@ -3969,7 +3969,7 @@ end
 function Base.show(io::IO, ::MIME"text/plain", r::ShardedResult)
     p = r.plan
     t = r.telemetry
-    st = display_state(p, BatchSweep.is_armed(store_root(r.target), r.run))
+    st = display_state(p, BatchSweep.is_started(store_root(r.target), r.run))
     icon = st === :succeeded ? "✅" : st === :partial   ? "⚠️" :
            st === :exhausted ? "⛔" : st === :blocked   ? "🛑" :
            st === :cancelled ? "⏹" : st === :running   ? "⏳" :
@@ -4132,10 +4132,10 @@ _target_label(t::ClusterTarget) = isempty(t.host) ? String(t.kind) : string(t.ki
 function Base.show(io::IO, r::ShardedResult)
     p, tel = getfield(r, :plan), getfield(r, :telemetry)
     tgt = getfield(r, :target)
-    # `is_armed` is one file check, but `show` is called from places that must never throw — an
+    # `is_started` is one file check, but `show` is called from places that must never throw — an
     # error message, a logging call, a store that has gone away underneath.
     st = try
-        display_state(p, BatchSweep.is_armed(store_root(tgt), getfield(r, :run)))
+        display_state(p, BatchSweep.is_started(store_root(tgt), getfield(r, :run)))
     catch
         p.state
     end
@@ -4208,12 +4208,12 @@ function run_sweep(target::SweepTarget, params::AbstractVector, body_src::Abstra
         push!(chunks, ck)
     end
     BatchSweep.write_sweep!(root, run, chunks; cell = String(cell))
-    # At most ONE unarmed run per cell. A run is keyed by body + setup + captures + grid, so every
+    # At most ONE unstarted run per cell. A run is keyed by body + setup + captures + grid, so every
     # edit to any of them mints a new one — and the old one, which nobody ever asked to run, is left
     # behind holding a blob per parameter point. An afternoon of adjusting a constant leaves a store
     # full of descriptors for work that was never requested.
     #
-    # Arming is the line, and it is the right one: an armed run may have jobs queued even with
+    # Starting is the line, and it is the right one: a started run may have jobs queued even with
     # nothing landed, so it survives. Anything that ran — even to a failure — has a manifest and
     # survives too. What goes is only ever a run nobody asked for that did nothing.
     _forget_stale_runs(root, run, String(cell))
@@ -4225,12 +4225,12 @@ function run_sweep(target::SweepTarget, params::AbstractVector, body_src::Abstra
     # repeatedly, and every one of those must be free — the work starts when someone asks for it,
     # from the card. `submit = true` is for a standalone script, where there is no card to ask from.
     #
-    # Keyed on THIS CALL's `submit`, never on whether the run happens to be armed. Reading the armed
-    # marker here meant a cell run resubmitted a sweep somebody had armed at some point — and a
+    # Keyed on THIS CALL's `submit`, never on whether the run happens to be started. Reading the
+    # marker here meant a cell run resubmitted a sweep somebody had started at some point — and a
     # worker restart re-runs every cell, so reopening a notebook could start hundreds of units that
-    # nobody asked for again. Arming says the work was wanted; it does not say this call should
-    # start it. The card's poll advances an armed sweep, which is where watching belongs.
-    submit && BatchSweep.arm!(root, run)
+    # nobody asked for again. Starting says the work was wanted; it does not say this call should
+    # start it. The card's poll advances a started sweep, which is where watching belongs.
+    submit && BatchSweep.start!(root, run)
     reconcile_and_sync!(target, run, launcher; cap, submit = submit && _reachable(target))
     # Filled with the result below, so the card's settle report can bring the OBJECT level with what
     # the card already knows. A Ref because the channel is registered before the result exists.

@@ -766,7 +766,7 @@ wipe uniquely covered was a manifest removed at the STORE by something else enti
 scratch purge. That now leaves a stale entry here until something reads it and finds no blob, which
 is a worse diagnostic but a far better failure than deleting work nobody has pushed yet.
 
-  `jobs/`   written by the HUB — the submission index, the armed and cancelled markers, the attempt
+  `jobs/`   written by the HUB — the submission index, the started and cancelled markers, the attempt
             counts. Deleted on the way OUT, which is how disarming and clearing attempts take
             effect. The pull exists only so a FRESH hub can recover a submission it did not make.
 

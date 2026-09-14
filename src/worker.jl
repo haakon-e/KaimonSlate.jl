@@ -2521,7 +2521,7 @@ function __slate_cluster_status(; name::AbstractString = "", spec::Dict = Dict{S
             "sweeps" => Dict{String,Any}[Dict{String,Any}(
                 "sweep" => r.sweep, "state" => String(r.state), "total" => r.total,
                 "done" => r.done, "ok" => r.ok, "failed" => r.failed,
-                "missing" => r.missing, "armed" => r.armed, "blocked" => r.blocked,
+                "missing" => r.missing, "started" => r.started, "blocked" => r.blocked,
                 "rate" => r.rate, "eta" => r.eta, "idle" => r.idle,
                 "hosts" => r.hosts, "stored" => r.stored, "read" => r.read)
                 for r in s.sweeps],
