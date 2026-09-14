@@ -1760,6 +1760,23 @@ a.cite{color:var(--accent);text-decoration:none;}a.cite:hover{text-decoration:un
 .exp-src $(t.hl)
 .exp-out{font-size:.86rem;} .exp-out .out,.exp-out .val,.exp-out .err{padding:8px 14px;}
 .exp-out .out{color:var(--dim);} .exp-out .val{color:var(--green);} .exp-out .err{color:var(--red);}
+/* ANSI colour in captured output — the same class names `_ansi_html` emits for the live page. This
+   sheet is separate from notebook.css, so without these an exported page would show base-16 colour
+   as plain text while 256/truecolour (inline styles) still came through: colour that half works.
+   The eight base colours map onto the export palette so they follow the chosen theme. */
+.ansi-fg-0,.ansi-fg-8{color:var(--dim);}      .ansi-bg-0,.ansi-bg-8{background:var(--dim);}
+.ansi-fg-1,.ansi-fg-9{color:var(--red);}      .ansi-bg-1,.ansi-bg-9{background:var(--red);}
+.ansi-fg-2,.ansi-fg-10{color:var(--green);}   .ansi-bg-2,.ansi-bg-10{background:var(--green);}
+.ansi-fg-3,.ansi-fg-11{color:var(--gold);}    .ansi-bg-3,.ansi-bg-11{background:var(--gold);}
+.ansi-fg-4,.ansi-fg-12{color:var(--accent);}  .ansi-bg-4,.ansi-bg-12{background:var(--accent);}
+.ansi-fg-5{color:#c678dd;} .ansi-fg-13{color:#d19aeb;}
+.ansi-bg-5{background:#c678dd;} .ansi-bg-13{background:#d19aeb;}
+.ansi-fg-6{color:#56b6c2;} .ansi-fg-14{color:#7fd4de;}
+.ansi-bg-6{background:#56b6c2;} .ansi-bg-14{background:#7fd4de;}
+.ansi-fg-7,.ansi-fg-15{color:var(--text);}    .ansi-bg-7,.ansi-bg-15{background:var(--text);}
+.ansi-bold{font-weight:600;} .ansi-dim{opacity:.72;} .ansi-italic{font-style:italic;}
+.ansi-underline{text-decoration:underline;} .ansi-strike{text-decoration:line-through;}
+.ansi-reverse{filter:invert(1);}
 .exp-out pre{margin:0;white-space:pre-wrap;} .exp-out .dispwrap,.disp.img{padding:10px 14px;}
 .disp.img img{max-width:100%;height:auto;border-radius:4px;display:block;}
 .disp.latex{padding:6px 14px;overflow-x:auto;} .katex{font-size:1.1em;}
@@ -1867,10 +1884,12 @@ end
 function _output_text_only_html(c::Cell)
     o = c.output; o === nothing && return ""
     io = IOBuffer()
-    isempty(o.stdout) || print(io, "<div class=\"out\"><pre>", _esc(o.stdout), "</pre></div>")
-    isempty(o.stderr) || print(io, "<div class=\"warn\"><pre>", _esc(o.stderr), "</pre></div>")
+    # Colour goes through `_ansi_html`, exactly as in `output_html` — this mirrors those blocks, and
+    # rendering them with a plain escaper here would put raw escape codes in the exported page.
+    isempty(o.stdout) || print(io, "<div class=\"out\"><pre>", ReportRender._ansi_html(o.stdout), "</pre></div>")
+    isempty(o.stderr) || print(io, "<div class=\"warn\"><pre>", ReportRender._ansi_html(o.stderr), "</pre></div>")
     (isempty(o.display) && !isempty(o.value_repr)) &&
-        print(io, "<div class=\"val\"><pre>", _esc(o.value_repr), "</pre></div>")
+        print(io, "<div class=\"val\"><pre>", ReportRender._ansi_html(o.value_repr), "</pre></div>")
     return String(take!(io))
 end
 
@@ -5344,8 +5363,13 @@ function export_markdown(nb::LiveNotebook; include_source::Bool = true, outputs:
             end
             o = c.output
             (o === nothing || !anyout) && continue
-            texts && o.exception !== nothing && println(io, "```\n", rstrip(o.exception), "\n```\n")
-            texts && !isempty(strip(o.stdout)) && println(io, "```\n", rstrip(o.stdout), "\n```\n")
+            # Markdown has no place to put colour, so it comes off rather than printing literally.
+            # Every captured text field, not just stdout: a package whose `show` or `showerror`
+            # colours unconditionally (ignoring the stream's `:color`) puts it in the others too.
+            plain = ReportEngine.strip_sgr
+            texts && o.exception !== nothing && println(io, "```\n", rstrip(plain(o.exception)), "\n```\n")
+            texts && !isempty(strip(o.stdout)) &&
+                println(io, "```\n", rstrip(plain(o.stdout)), "\n```\n")
             alt = haskey(fignum_of, c.id) ? string("Figure ", fignum_of[c.id]) : "figure"   # meaningful alt when a data-URI won't render
             imgs = 0
             for ch in o.display
@@ -5356,7 +5380,7 @@ function export_markdown(nb::LiveNotebook; include_source::Bool = true, outputs:
                 end
             end
             (texts && imgs == 0 && isempty(o.display) && !isempty(strip(o.value_repr))) &&
-                println(io, "```\n", rstrip(o.value_repr), "\n```\n")
+                println(io, "```\n", rstrip(plain(o.value_repr)), "\n```\n")
             if !isempty(_echarts_specs(c))
                 png = _snapshot(nb.id, c.id)
                 png === nothing ? println(io, "*[chart — open in a browser and re-export to capture]*\n") :

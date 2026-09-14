@@ -267,8 +267,6 @@ Base.isopen(::StreamBuf) = true
 Base.iswritable(::StreamBuf) = true
 Base.isreadable(::StreamBuf) = false
 Base.displaysize(::StreamBuf) = (24, 80)
-# Same answer DemuxIO gives — captured output is rendered as HTML, where SGR becomes spans.
-Base.get(::StreamBuf, key::Symbol, default) = key === :color ? true : default
 
 """
 Bytes appended since offset `from`, as `(text, new_offset)`, WITHOUT consuming them (the cell keeps
@@ -426,6 +424,7 @@ end
 # nothing and no acknowledgement is needed.
 const _CELLOUT_HZ = 10                  # frames/second: reads as live, too cheap to notice
 const _CELLOUT_MAX = 20_000             # chars per stream per frame — a live view only needs the tail
+const _CELLOUT_ROWS = 400               # ...and only the last few hundred LINES of it (see below)
 
 _stream_bufs(c::DemuxCapture) = (c.out, c.err)
 _stream_bufs(c::RedirectCapture) = (c.sout, c.serr)
@@ -461,8 +460,11 @@ function _start_cellout(capture::OutputCapture, sink, cid::AbstractString)
                     fresh = true
                 end
                 fresh || continue
-                o = _stream_tail(screen_text(screens[1]))
-                e = _stream_tail(screen_text(screens[2]))
+                # Only the tail is rendered. `feed!` is incremental but `screen_text` walks the grid,
+                # so asking for the whole transcript ten times a second would grow with the output
+                # and undo what the incremental feed just bought.
+                o = _stream_tail(screen_text(screens[1]; last_rows = _CELLOUT_ROWS))
+                e = _stream_tail(screen_text(screens[2]; last_rows = _CELLOUT_ROWS))
                 if o != prev_out || e != prev_err
                     prev_out = o; prev_err = e
                     sink(cid, o, e)

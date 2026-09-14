@@ -77,7 +77,12 @@ function _wpParseRecords(lines) {
 // Collapse consecutive IDENTICAL records into one with a ×N count — tames repetitive spam (e.g. a world-age
 // warning firing every tick) without hiding anything. Only merges adjacent equal records, so ordering and
 // distinct messages are untouched. Re-run on every render, so the count grows live as duplicates stream in.
-function _wpRecKey(r) { return r.plain !== undefined ? 'P\x00' + r.plain : 'R\x00' + r.head + '\x00' + r.cont.join('\x00'); }
+// Keyed on the STRIPPED text: a plain record keeps its colour for rendering, and two repeats of the
+// same line that a library happened to style differently are still the same line to a reader.
+function _wpRecKey(r) {
+  return r.plain !== undefined ? 'P\x00' + window.slateAnsiText(r.plain)
+                               : 'R\x00' + r.head + '\x00' + r.cont.join('\x00');
+}
 function _wpCollapse(recs) {
   const out = [];
   for (const r of recs) {

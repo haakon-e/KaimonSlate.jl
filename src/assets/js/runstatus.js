@@ -51,6 +51,7 @@
     if (tick) return;
     tick = setInterval(() => {
       if (!active()) { clearInterval(tick); tick = null; }
+      sweepCellOutput();
       renderPill(); renderTimers(); renderChip();
     }, 150);
   }
@@ -158,9 +159,11 @@
   // text is already cooked Julia-side, so a progress bar arrives as one settled line that changes
   // rather than a cascade; all that's left here is turning its colour into spans.
   //
-  // It goes in a `.outlive` block at the top of the cell's output, and `.haslive` hides the previous
-  // run's output underneath: the streaming text IS this run's output, and showing both at once
-  // leaves the reader unsure which is current. Removed when the real result patches in.
+  // It goes in a `.outlive` block at the top of the cell's output, and notebook.css hides the
+  // previous run's output underneath it (`.output:has(> .outlive)`): the streaming text IS this
+  // run's output, and showing both at once leaves the reader unsure which is current. Removing the
+  // block is therefore the whole of the cleanup — which is why it keys off the block's presence
+  // rather than a class that would have to be taken off again.
   window.onCellOutput = function (p) {
     p = p || {};
     // Only a cell we believe is RUNNING may show live output. The sampler is stopped by flag rather
@@ -187,6 +190,16 @@
     if (!host) return;
     const live = host.querySelector(':scope > .outlive');
     if (live) live.remove();
+  }
+  // Drop any live block whose cell is no longer running. `onCellDone` is the normal path, but a run
+  // can end without one — a lost worker, a WebSocket reconnect that missed the frame — and a block
+  // left behind goes on hiding the cell's real output indefinitely. Swept from the status tick,
+  // which is already running for exactly as long as anything can be producing frames.
+  function sweepCellOutput() {
+    document.querySelectorAll('.cell > .output > .outlive').forEach((live) => {
+      const cell = live.closest('.cell');
+      if (!cell || !running.has(cell.getAttribute('data-cid'))) live.remove();
+    });
   }
 
   // A running cell reported progress: {frac, msg, id, done}. `done` ends a scope → drop its bar;

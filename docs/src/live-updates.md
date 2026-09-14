@@ -134,6 +134,9 @@ ANSI colour survives: `printstyled`, `@warn`, stacktraces and `Pkg` output keep 
 rendered against the notebook's own theme. Cursor-movement and erase codes are consumed during the
 replay, so no escape sequence reaches the page as literal text.
 
+Exports follow. An HTML export carries the colour and styles it from its own theme; PDF and Markdown
+have nowhere to put it, so they take the plain text.
+
 The live text is a *preview* — the cell's real output replaces it when the run finishes, so a
 dropped frame costs nothing.
 

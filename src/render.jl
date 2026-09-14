@@ -77,6 +77,10 @@ backtrace, linkifies it), so escaping stays correct by construction.
 function _ansi_html(text::AbstractString, inner::Function = _esc)
     s = String(text)
     occursin('\e', s) || return inner(s)          # the common case: no colour, no work
+    # Cooked text has only SGR in it, but output stored before cooking existed — or produced by a
+    # remote worker on an older build — has not been through the cooker at all. Dropping the rest
+    # here rather than trusting the contract costs one pass over text that already contains an ESC.
+    s = ReportEngine.keep_sgr_only(s)
     io = IOBuffer()
     attr = ReportEngine._TC_PLAIN
     pos = firstindex(s)
@@ -127,7 +131,10 @@ function output_html(cell::Cell)
     # still have succeeded). VS Code source links in any `@ file:line` notices are made clickable.
     isempty(o.stderr) || print(io, "<div class=\"warn\"><pre>", _ansi_html(o.stderr, _linkify_trace), "</pre></div>")
     if isempty(o.display) && !isempty(o.value_repr)
-        print(io, "<div class=\"val\"><pre>", _esc(o.value_repr), "</pre></div>")
+        # Same treatment as stdout. The capture layer renders a value repr without colour, but a
+        # package whose `show` colours unconditionally — ignoring the stream's `:color` — reaches
+        # here anyway, and `_esc` would print its escape codes.
+        print(io, "<div class=\"val\"><pre>", _ansi_html(o.value_repr), "</pre></div>")
     end
     isempty(o.display) || print(io, "<div class=\"dispwrap\">", _render_chunks(o.display), "</div>")
     if o.exception !== nothing
@@ -136,18 +143,23 @@ function output_html(cell::Cell)
         # in-notebook frame (closest to where it actually fired, possibly another cell); the
         # backtrace's `cell:<id>:N` frames (`cellref`) each jump to their own cell (errors.js).
         org = _error_origin(o)
+        # Both of these renderers style the text THEMSELVES, so colour arriving in it (from a
+        # package whose `showerror` colours unconditionally) is redundant and would interleave with
+        # their markup. Dropped rather than converted to spans, unlike stdout.
+        exc = ReportEngine.strip_ansi(o.exception)
         print(io, "<div class=\"err\"><pre>")
         if org === nothing
-            print(io, _render_exc_html(o.exception))
+            print(io, _render_exc_html(exc))
         else
             cid, ln = org
             print(io, "<span class=\"err-msg errjump\"",
                   (isempty(cid) ? "" : " data-cid=\"" * cid * "\""), " data-line=\"", ln,
                   "\" title=\"jump to the error origin (line ", ln, isempty(cid) ? "" : " in cell " * cid, ")\">",
-                  _render_exc_html(o.exception), "</span>")
+                  _render_exc_html(exc), "</span>")
         end
         (o.backtrace === nothing || isempty(o.backtrace)) ||
-            print(io, "<span class=\"err-bt\">\n", _linkify_trace(o.backtrace), "</span>")
+            print(io, "<span class=\"err-bt\">\n",
+                  _linkify_trace(ReportEngine.strip_ansi(o.backtrace)), "</span>")
         print(io, "</pre></div>")
     end
     return String(take!(io))

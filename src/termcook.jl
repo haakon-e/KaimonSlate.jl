@@ -26,10 +26,22 @@
 # by the engine AND the gate worker, like capture.jl.
 
 # A cursor move can't grow the grid without bound: `\e[9999B` from a confused library would
-# otherwise allocate 9999 lines. Ordinary newlines are NOT capped this way — they represent real
-# output, and capture.jl's `_MAX_OUT_CHARS` is the ceiling that matters there.
+# otherwise allocate 9999 lines.
 const _TC_MAX_COLS = 10_000     # widest line a cursor move may reach
 const _TC_MAX_SCROLL = 500      # most lines one relative cursor-down may create
+
+# The whole grid is bounded too. A `TCell` costs 16 bytes and every line is its own `Vector`, so an
+# ungoverned grid is an order of magnitude larger than the string it was built from — and capture.jl's
+# `_MAX_OUT_CHARS` can't be that ceiling, because it is applied to the RESULT, after cooking.
+#
+# What makes a tight budget affordable is that redrawing in place does not grow the grid: a progress
+# bar overwrites cells it already owns, so a cell streaming megabytes of bar frames never approaches
+# this no matter how long it runs. Only genuinely new content grows it — and 100k characters of that
+# is already all the display keeps. Past the budget the replay keeps CONSUMING (so no escape sequence
+# can leak into the text as a side effect of giving up) and stops growing; `screen_text` then says so,
+# which is visible in the saved full output where the loss would otherwise be silent.
+const _TC_MAX_ROWS = 200_000    # lines the grid will hold
+const _TC_MAX_CELLS = 4_000_000 # characters the grid will hold, across all lines
 
 # Character appearance. `fg`/`bg`: -1 = terminal default, 0..255 = palette index, and ≥256 packs
 # a 24-bit colour as `256 + (r<<16 | g<<8 | b)` so truecolour survives the round trip instead of
@@ -66,32 +78,48 @@ mutable struct TermScreen
     col::Int              # 0-based cursor column
     attr::TAttr           # appearance applied to characters written now
     pending::Vector{UInt8}  # trailing partial escape / UTF-8 char awaiting more bytes
+    cells::Int            # cells currently held across all rows (the memory budget, see _TC_MAX_CELLS)
+    full::Bool            # budget reached — content has been dropped
 end
-TermScreen() = TermScreen([TCell[]], 0, 0, _TC_PLAIN, UInt8[])
+TermScreen() = TermScreen([TCell[]], 0, 0, _TC_PLAIN, UInt8[], 0, false)
 
 # ── Grid primitives ──────────────────────────────────────────────────────────
 
-# The line at 0-based row `r`, creating intervening lines as needed.
-function _tc_line!(s::TermScreen, r::Int)
-    while length(s.rows) <= r
+# The line the cursor is on, creating intervening lines as needed. Every caller wants the CURRENT
+# row, so the clamp lives here: past the row budget the cursor stays on the last line and further
+# output overwrites there rather than growing the grid.
+function _tc_cur!(s::TermScreen)
+    if s.row >= _TC_MAX_ROWS
+        s.full = true
+        s.row = _TC_MAX_ROWS - 1
+    end
+    while length(s.rows) <= s.row
         push!(s.rows, TCell[])
     end
-    return s.rows[r + 1]
+    return s.rows[s.row + 1]
 end
 
 function _tc_put!(s::TermScreen, ch::Char)
     s.col >= _TC_MAX_COLS && return nothing
-    line = _tc_line!(s, s.row)
-    while length(line) < s.col        # pad a gap left by a cursor jump past the line end
-        push!(line, _TC_BLANK)
+    line = _tc_cur!(s)
+    if s.col < length(line)           # overwriting a cell the grid already owns — free, and the
+        line[s.col + 1] = TCell(ch, s.attr)   # case a redrawing library spends all its time in
+        s.col += 1
+        return nothing
     end
-    cell = TCell(ch, s.attr)
-    s.col < length(line) ? (line[s.col + 1] = cell) : push!(line, cell)
+    if s.cells >= _TC_MAX_CELLS       # budget spent — keep consuming, stop growing
+        s.full = true
+        return nothing
+    end
+    while length(line) < s.col        # pad a gap left by a cursor jump past the line end
+        push!(line, _TC_BLANK); s.cells += 1
+    end
+    push!(line, TCell(ch, s.attr)); s.cells += 1
     s.col += 1
     return nothing
 end
 
-_tc_newline!(s::TermScreen) = (s.row += 1; s.col = 0; _tc_line!(s, s.row); nothing)
+_tc_newline!(s::TermScreen) = (s.row += 1; s.col = 0; _tc_cur!(s); nothing)
 
 # ── Escape-sequence parsing ──────────────────────────────────────────────────
 
@@ -178,16 +206,18 @@ function _tc_sgr(a::TAttr, par::AbstractString)
     return TAttr(fg, bg, flags)
 end
 
+_tc_drop!(s::TermScreen, line::Vector{TCell}) = (s.cells -= length(line); empty!(line); nothing)
+
 function _tc_erase_line!(s::TermScreen, mode::Int)
-    line = _tc_line!(s, s.row)
+    line = _tc_cur!(s)
     if mode == 0                                  # cursor → end of line
-        s.col < length(line) && resize!(line, s.col)
+        s.col < length(line) && (s.cells -= length(line) - s.col; resize!(line, s.col))
     elseif mode == 1                              # start of line → cursor (inclusive)
         for k in 1:min(s.col + 1, length(line))
             line[k] = _TC_BLANK
         end
     elseif mode == 2
-        empty!(line)
+        _tc_drop!(s, line)
     end
     return nothing
 end
@@ -195,16 +225,22 @@ end
 function _tc_erase_display!(s::TermScreen, mode::Int)
     if mode == 0                                  # cursor → end of screen
         _tc_erase_line!(s, 0)
-        length(s.rows) > s.row + 1 && resize!(s.rows, s.row + 1)
+        if length(s.rows) > s.row + 1
+            for r in (s.row + 2):length(s.rows)
+                s.cells -= length(s.rows[r])
+            end
+            resize!(s.rows, s.row + 1)
+        end
     elseif mode == 1                              # start of screen → cursor
         for r in 1:s.row
-            empty!(s.rows[r])
+            _tc_drop!(s, s.rows[r])
         end
         _tc_erase_line!(s, 1)
     elseif mode == 2 || mode == 3
         s.rows = [TCell[]]
         s.row = 0
         s.col = 0
+        s.cells = 0
     end
     return nothing
 end
@@ -218,13 +254,13 @@ function _tc_csi!(s::TermScreen, par::AbstractString, final::Char)
     elseif final == 'A'
         s.row = max(0, s.row - _tc_param(par, 1, 1))
     elseif final == 'B'
-        s.row += min(_tc_param(par, 1, 1), _TC_MAX_SCROLL); _tc_line!(s, s.row)
+        s.row += min(_tc_param(par, 1, 1), _TC_MAX_SCROLL); _tc_cur!(s)
     elseif final == 'C'
         s.col = min(_TC_MAX_COLS, s.col + _tc_param(par, 1, 1))
     elseif final == 'D'
         s.col = max(0, s.col - _tc_param(par, 1, 1))
     elseif final == 'E'
-        s.row += min(_tc_param(par, 1, 1), _TC_MAX_SCROLL); s.col = 0; _tc_line!(s, s.row)
+        s.row += min(_tc_param(par, 1, 1), _TC_MAX_SCROLL); s.col = 0; _tc_cur!(s)
     elseif final == 'F'
         s.row = max(0, s.row - _tc_param(par, 1, 1)); s.col = 0
     elseif final == 'G' || final == '`'
@@ -234,7 +270,7 @@ function _tc_csi!(s::TermScreen, par::AbstractString, final::Char)
         # absolute against, and a cell's output begins at the top of its own transcript.
         s.row = max(0, _tc_param(par, 1, 1) - 1)
         s.col = max(0, _tc_param(par, 2, 1) - 1)
-        _tc_line!(s, s.row)
+        _tc_cur!(s)
     elseif final == 'K'
         _tc_erase_line!(s, _tc_param(par, 1, 0))
     elseif final == 'J'
@@ -272,6 +308,16 @@ function _tc_escape!(s::TermScreen, b::Vector{UInt8}, i::Int, n::Int)
     return 2                                             # two-byte escape (ESC 7, ESC =, …) — drop
 end
 
+# How long an INCOMPLETE sequence may hold the buffer before `feed!` judges it a stray ESC rather
+# than a truncation. A CSI is a handful of bytes; OSC and DCS carry a payload — a hyperlink URL, a
+# window title — and legitimately run long, so giving up on one at the same threshold would emit
+# somebody's URL into the text as if it were output.
+function _tc_escape_wait(b::Vector{UInt8}, i::Int, n::Int)
+    i + 1 > n && return 128
+    c = b[i + 1]
+    return (c == UInt8(']') || c in (UInt8('P'), UInt8('X'), UInt8('^'), UInt8('_'))) ? 8192 : 128
+end
+
 # ── Feeding and reading back ─────────────────────────────────────────────────
 
 """
@@ -292,7 +338,7 @@ function feed!(s::TermScreen, chunk::AbstractString)
             if adv == 0
                 # Incomplete — wait, unless the "sequence" has grown implausible, in which case it
                 # is a stray ESC rather than a truncation and holding the buffer would stall output.
-                n - i + 1 <= 128 && break
+                n - i + 1 <= _tc_escape_wait(b, i, n) && break
                 i += 1
             else
                 i += adv
@@ -350,19 +396,26 @@ function _tc_sgr_delta(from::TAttr, to::TAttr)
 end
 
 """
-    screen_text(screen) -> String
+    screen_text(screen; last_rows = 0) -> String
 
 What the screen is showing: lines joined with `\\n`, trailing blank cells and trailing blank
 lines dropped, and SGR re-emitted around runs that share an appearance. The only escape
 sequences in the result are SGR.
+
+`last_rows` renders only that many lines from the bottom, marking the elision with a leading `…`.
+`feed!` is incremental, but this is not — it walks the whole grid — so a caller that samples a
+screen repeatedly while it grows (the live stream) would otherwise pay for the entire transcript on
+every sample. It only ever displays the tail, so that is all it should ask for.
 """
-function screen_text(s::TermScreen)
+function screen_text(s::TermScreen; last_rows::Int = 0)
     last_row = length(s.rows)
     while last_row > 0 && isempty(s.rows[last_row])
         last_row -= 1
     end
+    first_row = (last_rows > 0 && last_row > last_rows) ? last_row - last_rows + 1 : 1
     io = IOBuffer()
-    for r in 1:last_row
+    first_row > 1 && print(io, "…\n")
+    for r in first_row:last_row
         line = s.rows[r]
         stop = length(line)
         while stop > 0 && line[stop] == _TC_BLANK       # trailing padding a terminal wouldn't show
@@ -377,6 +430,7 @@ function screen_text(s::TermScreen)
         cur == _TC_PLAIN || print(io, "\e[0m")
         r < last_row && print(io, '\n')
     end
+    s.full && print(io, "\n\n… ⚠ too much output to replay — the rest was dropped.")
     return String(take!(io))
 end
 
@@ -404,3 +458,27 @@ end
 Drop SGR sequences, for consumers that render no colour (Typst/PDF export, plain-text tooling).
 """
 strip_sgr(text::AbstractString) = replace(String(text), r"\e\[[0-9;:]*m" => "")
+
+# Every escape sequence, in the three shapes that occur: a string payload (OSC/DCS/SOS/PM/APC)
+# terminated by BEL or ST, a CSI, and a bare two-byte escape. Mirrored by `ANY_ESC` in ansi.js.
+const _ANY_ESC = r"\e[\]P^_X][^\a\e]*(?:\a|\e\\)?|\e\[[0-9;:?<>=!]*[\x40-\x7e]|\e[\x40-\x5f]"
+_is_sgr(m::AbstractString) = length(m) > 2 && m[2] == '[' && last(m) == 'm'
+
+"""
+    keep_sgr_only(text) -> String
+
+Drop every escape sequence that is not SGR. Cooked text already satisfies this, so it is a defence
+for text that reached a renderer WITHOUT being cooked — output stored before cooking existed, or a
+remote worker on an older build — where a raw escape byte would otherwise land in the page.
+"""
+keep_sgr_only(text::AbstractString) =
+    replace(String(text), _ANY_ESC => m -> _is_sgr(m) ? m : "")
+
+"""
+    strip_ansi(text) -> String
+
+Drop every escape sequence, colour included. For a renderer that applies its OWN styling to the
+text — the error message is syntax-coloured and the backtrace dimmed — where incoming colour is
+redundant at best and interleaves with that markup at worst.
+"""
+strip_ansi(text::AbstractString) = replace(String(text), _ANY_ESC => "")

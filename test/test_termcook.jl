@@ -145,9 +145,90 @@ const PM_UNKNOWN = "\rscan: 2    Time: 0:00:00\e[K\rscan: 3    Time: 0:00:00\e[K
         @test cook_terminal(string("\e[", "9"^200, "ttail")) == "tail"
     end
 
-    @testset "strip_sgr" begin
+    @testset "a long OSC payload is not abandoned as a stray ESC" begin
+        # OSC carries a payload — a hyperlink URL, a window title — and can easily outrun the length
+        # at which an unterminated CSI is written off. Judged at the same threshold, a hyperlink
+        # split across two chunks would have its ESC dropped and its URL printed as output.
+        url = "http://example.com/" * "p"^900
+        src = string("\e]8;;", url, "\e\\shown\e]8;;\e\\ after")
+        @test cook_terminal(src) == "shown after"
+        b = collect(codeunits(src))                       # ...and the same when it arrives split
+        for cut in (4, 40, 500, length(b) - 3)
+            s = TermScreen()
+            feed!(s, String(b[1:cut])); feed!(s, String(b[(cut + 1):end]))
+            @test screen_text(s) == "shown after"
+        end
+    end
+
+    @testset "the grid is bounded, and says so" begin
+        # Redrawing in place is what the cooker is FOR, and it must stay free however long it runs:
+        # the bar overwrites cells it already owns, so the grid never grows past one line.
+        s = TermScreen()
+        for i in 1:20_000
+            feed!(s, string("\rprogress ", i, "/20000"))
+        end
+        @test s.cells <= _TC_MAX_COLS
+        @test !s.full
+        @test screen_text(s) == "progress 20000/20000"
+
+        # Genuinely new content DOES grow it, and past the budget the replay keeps consuming rather
+        # than allocating. Asserted on the counters (filling 4M cells for real is a slow test).
+        g = TermScreen()
+        g.cells = _TC_MAX_CELLS
+        feed!(g, "overrun\n\e[31mand this\e[0m")
+        @test g.full
+        @test occursin("too much output", screen_text(g))
+        @test !occursin("overrun", screen_text(g)) && !occursin("and this", screen_text(g))
+        @test !occursin('\e', screen_text(g))      # the colour was consumed, not left in the text
+
+        # A row runaway is capped the same way, and the cursor stays on the last line rather than
+        # running off the end of the grid.
+        r = TermScreen()
+        feed!(r, "\n"^(_TC_MAX_ROWS + 50) * "tail")
+        @test length(r.rows) <= _TC_MAX_ROWS
+        @test r.full && occursin("tail", screen_text(r))
+
+        # Erasure gives the budget back — a screen cleared and rewritten must not leak toward the cap.
+        e = TermScreen()
+        feed!(e, "a"^500)
+        used = e.cells
+        feed!(e, "\e[2J")
+        @test e.cells == 0
+        feed!(e, "b"^500)
+        @test e.cells == used && !e.full
+    end
+
+    @testset "screen_text renders only the tail when asked" begin
+        # What the live stream samples ten times a second. Rendering the whole transcript each time
+        # would grow with the output; the view only ever shows the end of it.
+        s = TermScreen()
+        feed!(s, join(["line $i" for i in 1:500], "\n"))
+        whole = screen_text(s)
+        tail = screen_text(s; last_rows = 10)
+        @test count(==('\n'), tail) == 10                  # 10 lines + the elision marker
+        @test startswith(tail, "…\n") && endswith(tail, "line 500")
+        @test !occursin("line 489", tail) && occursin("line 491", tail)
+        @test screen_text(s; last_rows = 10_000) == whole  # more rows than exist → no marker
+        # Colour is re-established per line, so a tail never inherits a run it cut away from.
+        c = TermScreen()
+        feed!(c, "\e[31mred one\nred two")
+        @test screen_text(c; last_rows = 1) == "…\n\e[31mred two\e[0m"
+    end
+
+    @testset "strip_sgr and keep_sgr_only" begin
         @test strip_sgr("\e[31mred\e[0m") == "red"
         @test strip_sgr("plain") == "plain"
         @test strip_sgr("\e[1;38;5;9mx\e[0m") == "x"
+        # keep_sgr_only is the complement: colour stays, everything else goes. It is what protects a
+        # renderer handed text that never went through the cooker.
+        @test keep_sgr_only("\e[31mred\e[0m") == "\e[31mred\e[0m"
+        @test keep_sgr_only("a\e[2Jb\e[1;3Hc") == "abc"
+        @test keep_sgr_only("x\e]0;title\ay") == "xy"
+        @test keep_sgr_only("\e[31ma\e[Kb\e[0m") == "\e[31mab\e[0m"
+        @test keep_sgr_only("plain") == "plain"
+        # strip_ansi is the pair to it: nothing survives, for a renderer that styles the text itself.
+        @test strip_ansi("\e[31mred\e[0m") == "red"
+        @test strip_ansi("a\e[2Jb\e]0;t\ac") == "abc"
+        @test strip_ansi("plain") == "plain"
     end
 end
