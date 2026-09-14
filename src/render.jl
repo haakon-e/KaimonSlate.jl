@@ -225,7 +225,10 @@ end
 # (our cell eval `filename`) → jump to that line IN THIS CELL (errors.js wires `.cellref`).
 function _linkify_trace(bt::AbstractString)
     home = homedir()
-    s = replace(_esc(bt), r"((?:~|/)[\w./ \-]*\.jl):(\d+)" => function (m)
+    # `+` and `@` are ordinary in a path (a git worktree, a versioned directory). Leaving them out
+    # does not fail to match — it matches a SHORTER tail that is not a real file, so the frame
+    # silently stops being clickable for everyone whose checkout contains one.
+    s = replace(_esc(bt), r"((?:~|/)[\w./ +@\-]*\.jl):(\d+)" => function (m)
         p = match(r"^(.*\.jl):(\d+)$", m)
         p === nothing && return m
         path, line = String(p.captures[1]), String(p.captures[2])
