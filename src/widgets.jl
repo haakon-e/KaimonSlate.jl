@@ -855,6 +855,39 @@ function _do_on_bind(listeners::Dict{Symbol,Vector{Any}}, name::Symbol, f)
                   v === nothing || filter!(g -> g !== f, v); nothing)
 end
 
+# Observables — imported here, conditionally, because this file has two homes.
+#
+# widgets.jl is included into `ReportEngine` (the in-process kernel) and into the worker's
+# `SlateWorker`, and an `import` written in one of them does nothing for the other. Only the engine
+# had it, so `bind_observable` worked standalone and threw `UndefVarError` on the gate worker, which
+# is where notebooks actually run (issue #34).
+#
+# It cannot be an unconditional import either. The worker's LOAD_PATH is the KaimonGate env, the
+# NOTEBOOK's own project, and the slate infra env — Slate's own environment is not on it. A plain
+# `import Observables` there fails to resolve and takes worker STARTUP down with it, for every
+# notebook rather than only the ones using this.
+#
+# Nor can it be loaded on demand. Loading a package mid-cell puts its methods in a newer world than
+# the cell that triggered the load, so that cell cannot use the Observable it just asked for —
+# `invokelatest` fixes the construction here and the caller's own `obs[]` fails instead.
+#
+# So: try it once, at include time, and let it be absent. The notebook's manifest is what decides —
+# which costs nothing to a notebook that doesn't have it, and is always satisfied for the readers
+# this feature is FOR, since it exists to drive a Makie figure and Makie brings Observables along.
+const _OBSERVABLES_ERR = Ref{Any}(nothing)
+try
+    @eval import Observables
+catch e
+    _OBSERVABLES_ERR[] = e          # absent is fine; `bind_observable` is what reports it
+end
+_observables() =
+    isdefined(@__MODULE__, :Observables) ? getfield(@__MODULE__, :Observables) :
+    error("bind_observable needs the Observables package, which this notebook's environment " *
+          "cannot resolve. Add it to the notebook (the Packages panel, or `Pkg.add(\"Observables\")`) " *
+          "and run the cell again." *
+          (_OBSERVABLES_ERR[] === nothing ? "" :
+           "\n  (loading it reported: " * sprint(showerror, _OBSERVABLES_ERR[]) * ")"))
+
 """
     _do_bind_observable(reg, reglock, listeners, cleanup, name) -> Observable
 
@@ -874,7 +907,7 @@ function _do_bind_observable(reg::Dict{Symbol,Tuple{Widget,Any}}, reglock::Reent
     haskey(reg, name) ||
         error("bind_observable(:$name): no such control — declare it first with `@bind $name …`")
     w, cv = lock(reglock) do; reg[name]; end
-    o = Observables.Observable{Any}(wrap_value(w, cv))
+    o = _observables().Observable{Any}(wrap_value(w, cv))
     unregister = _do_on_bind(listeners, name, v -> (o[] = v; nothing))
     cleanup(unregister)
     return o

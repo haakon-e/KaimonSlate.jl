@@ -14,10 +14,12 @@ module ReportEngine
 
 import JSON   # durable `using`-export cache file (deps.jl)
 import Pkg    # in-process package add/remove (eval.jl)
-# Observables backs `bind_observable` (widgets.jl): a control's value as a live cell-local
-# Observable. It is a ~200-line package with no dependencies beyond Base, and it is NOT Makie —
-# the rule that Makie stays a user dependency is untouched.
-import Observables
+# Observables backs `bind_observable` and is imported by widgets.jl itself, not here — that file is
+# shared with the worker, which cannot always resolve the package, so the import lives with the code
+# that needs it and is allowed to fail (see the note there). The Project.toml dependency stays even
+# though nothing in this module imports it: it is what makes the package resolvable in THIS process,
+# so standalone Slate's in-process kernel can always answer a `bind_observable` call. A worker
+# resolves it from the notebook's own manifest instead.
 import Serialization   # decode base64'd slate_emit values off the gate stream (gate_kernel.jl)
 import Base64
 
