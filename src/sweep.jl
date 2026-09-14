@@ -647,7 +647,7 @@ function attr_chunk(attrs::AbstractDict)
 end
 
 with_chunk(t::LocalTarget, n) = n === nothing ? t :
-    LocalTarget(t.root, t.project, t.payload, n)
+    LocalTarget(t.root, t.project, t.payload, n, t.procs)
 with_chunk(t::ClusterTarget, n) = n === nothing ? t :
     ClusterTarget(t.kind, t.host, t.root, t.root_remote, t.project, t.payload,
                   t.resources, n, t.account, t.qos, t.prologue, t.directives, t.parent, t.julia)

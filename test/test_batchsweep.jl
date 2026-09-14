@@ -2422,6 +2422,17 @@ end
                 @test occursin("12 at once", Sweep._target_line(mk()))
                 @test occursin("3 at once", Sweep._target_line(mk(procs = 3)))
 
+                # A cell header's `chunk=` rebuilds the target POSITIONALLY, so every field has to
+                # be carried across by hand — which is the one place a new field is silently
+                # dropped, and it is on the path every sweep cell with a `chunk=` takes.
+                t3 = Sweep.with_chunk(mk(procs = 3), 5)
+                @test t3.chunk == 5 && t3.procs == 3 && maxproc(t3) == 3
+                @test Sweep.with_chunk(mk(), 5).procs == 0        # unset stays unset, not defaulted
+                for f in fieldnames(Sweep.LocalTarget)
+                    f === :chunk && continue
+                    @test getfield(t3, f) == getfield(mk(procs = 3), f)
+                end
+
                 # …and the definition's number arrives as a STRING out of the registry.
                 spec = Dict("name" => "box", "kind" => "local", "root" => root,
                             "project" => tempdir(), "procs" => "6")
