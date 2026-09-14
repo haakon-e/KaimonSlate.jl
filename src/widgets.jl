@@ -1443,6 +1443,7 @@ Base.iterate(s::SyncDict, st...) = iterate(lock(s.lk) do; collect(s.d); end, st.
 function _populate_notebook_ns!(m::Module; echart, EChart, slate_table, SlateTable,
                                 slate_query, slate_refresh, slate_progress = (frac; msg = "", id = "", done = false) -> nothing,
                                 slate_emit = (channel, data) -> nothing,
+                                slate_cellout = (cid, out, err) -> nothing,
                                 set_bind = (name, value) -> nothing,
                                 assetbase = () -> "")
     Core.eval(m, :(const echart = $echart))
@@ -1460,6 +1461,9 @@ function _populate_notebook_ns!(m::Module; echart, EChart, slate_table, SlateTab
     Core.eval(m, :(const slate_refresh = $slate_refresh))
     Core.eval(m, :(const slate_progress = $slate_progress))   # slate_progress(frac; msg) → live cell progress
     Core.eval(m, :(const slate_emit = $slate_emit))           # slate_emit(channel, data) → live push to a cell's custom JS (cellstream:)
+    # INTERNAL (underscored — not part of the authoring surface): capture.jl's output-streaming
+    # watchdog pushes a cooked frame of what the running cell has printed so far through here.
+    Core.eval(m, :(const __slate_cellout = $slate_cellout))
     # `set_bind(:name, value)` — the notebook driving one of its OWN controls. Takes the same path a
     # browser change takes (coerce → restale readers → sync the widget → persist), so a value set
     # from a cell is indistinguishable from one the reader typed. Without it a control can be left

@@ -8,6 +8,7 @@ using ReTest
 module Defname;   include("test_defname.jl");   end
 module Prepare;   include("test_prepare.jl");   end
 module Demux;     include("test_demux.jl");     end
+module Termcook;  include("test_termcook.jl");  end
 module Parsched;  include("test_parsched.jl");  end
 module Memostore; include("test_memostore.jl"); end
 module Slatetask; include("test_slatetask.jl"); end
@@ -65,7 +66,7 @@ module BindObs;   include("test_bind_observable.jl"); end
 # Every module above belongs here. A file that is `include`d but left out of this tuple is still
 # COMPILED, so it never looks broken — it is simply never run, and its testsets pass silently by
 # not existing.
-const _TESTMODS = (Defname, Prepare, Demux, Parsched, Memostore, Slatetask, Batchsweep, Transfer, SyncDictT, Dataset, TablesInc, Sweepcell, Effectstore, Blobchannel, RemotePool, Regions, SlateDiagT, Parallel, Animation, Echarts, SlateLook, Engine, Eval, Deps,
+const _TESTMODS = (Defname, Prepare, Demux, Termcook, Parsched, Memostore, Slatetask, Batchsweep, Transfer, SyncDictT, Dataset, TablesInc, Sweepcell, Effectstore, Blobchannel, RemotePool, Regions, SlateDiagT, Parallel, Animation, Echarts, SlateLook, Engine, Eval, Deps,
                    Envprep, Tools, Registry, Toolcell,
                    Web, Bind, ReactiveState, Render, LiveOutput, Tables, Trace, Complete, History, SlateApi, Agentops, Repro, Slides,
                    Frontmatter, Export, Bootfail, Publishing, App, AppMode, Workbook, Extensions, CatalogT, AssetsSyntax, Files, Config, WscallBinary, WsOrder, BindObs)

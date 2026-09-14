@@ -138,6 +138,32 @@ function rebaselineAll(state) {
 }
 window.slateRebaseline = _rebaseline;
 window.slateRebaselineAll = rebaselineAll;
+// What a state push means for ONE cell's open editor.
+//
+// Pure on purpose: the caller gathers the facts and acts on the verdict. This decision has been wrong
+// three times (split and merge, then undo/redo and Replace All, then converting a cell's kind) and each
+// time it was unreachable by any test, because it lived inline in the render effect that also swaps
+// output, rebuilds control strips and measures visibility. Naming the outcomes is most of the value:
+// `settled` used to be an unlabelled fall-through, which is why it was hard to see that it and
+// `conflict` are different answers.
+//
+//   idle         the server's source for this cell did not move
+//   placeholder  it moved, but no editor is mounted — only the preview text needs refreshing
+//   forward      it moved and the editor has no local edits → adopt the new source
+//   settled      it moved and the editor already holds exactly it → nothing to do
+//   conflict     it moved, the editor has local edits, and they differ from it → ask the user
+//
+// `hash` is the server's per-cell content hash and is authoritative when both sides have one; the
+// string compare is the fallback for a state that predates it.
+function reconcileVerdict({ prevSrc, prevHash, source, hash, mine, hasEditor, eq }) {
+  const same = eq || ((a, b) => a === b);
+  const moved = (hash != null && prevHash != null) ? hash !== prevHash : !same(source, prevSrc);
+  if (!moved) return 'idle';
+  if (!hasEditor) return 'placeholder';
+  if (same(mine, prevSrc)) return 'forward';
+  return same(mine, source) ? 'settled' : 'conflict';
+}
+window.slateReconcileVerdict = reconcileVerdict;
 // Split a code cell at the editor cursor into two cells.
 async function splitCell(id, view) {
   const v = view || editors[id]; if (!v) return;
@@ -259,7 +285,11 @@ async function toggleType(id, kind)  {
   // one request so the server converts WITHOUT evaluating — pressing m/y must not run the code yet.
   const body = { kind };
   if (window.editors[id]) body.source = edText(id);
-  renderAll(await api('POST', '/api/cell-type/' + id, body));
+  // The server may hand back a source DIFFERENT from the one sent: converting out of a web cell
+  // unwraps the `@web(...)` skin (`set_kind!`). With an uncommitted edit open that lands as an
+  // editor matching neither its baseline nor the incoming text, which is the shape of an external
+  // edit, so the convert accused an agent of it. Rebaseline, the way undo and split already do.
+  renderAll(rebaselineAll(await api('POST', '/api/cell-type/' + id, body)));
 }
 async function undoNb() { const s = await api('POST', '/api/undo'); renderAll(rebaselineAll(s)); if (s && s.undid) toast('Undid ' + s.undid, 2000); }
 async function redoNb() { const s = await api('POST', '/api/redo'); renderAll(rebaselineAll(s)); if (s && s.redid) toast('Redid ' + s.redid, 2000); }
