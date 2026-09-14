@@ -4223,7 +4223,7 @@ end
 # ── The sweep itself ─────────────────────────────────────────────────────────────────────────
 
 """
-    run_sweep(target, params, body_src; setup_src = "", captures = Dict(), submit = true) -> ShardedResult
+    run_sweep(target, params, body_src; setup_src = "", captures = Dict(), submit = false) -> ShardedResult
 
 The function `@sweep` expands to. Idempotent: it works out what is missing, submits exactly that,
 and returns immediately with whatever has already landed.

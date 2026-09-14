@@ -729,6 +729,16 @@ end
         @test cn("(rows[i] = v; rows)") == Set([:rows, :i, :v])        # assigning THROUGH a variable
         @test cn("p.field") == Set{Symbol}()                            # field names are not reads
 
+        # What a free name that resolves to a VALUE turns into. A stream is the trap here: in a
+        # worker `stdout` is a capture object belonging to the worker's own module, so shipping it
+        # sends a type the task process cannot deserialize and the unit dies naming a module the
+        # author never wrote. Left uncaptured, the node resolves its own — which is what a body
+        # writing to `stdout` meant.
+        # `Base` carries one of each, so this needs no fixture: `pi` is a value, `stdout` a stream,
+        # `sin` a function, `Int` a type.
+        caps = Sweep._collect_captures(Base, [:pi, :stdout, :sin, :Int, :no_such_name_here], :p)
+        @test collect(keys(caps)) == [:pi] && caps[:pi] === Base.pi
+
         # …and the effect on the key: an unrelated global sharing a comprehension variable's name
         # must not move it.
         mktempdir() do root
