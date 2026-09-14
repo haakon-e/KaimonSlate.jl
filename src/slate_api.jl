@@ -722,8 +722,17 @@ See also `save_asset`, `FileUpload`."""),
         "Fan a parameter grid out to a cluster (or local processes) — resumable, watchable, never blocks.",
         ["slurm", "cluster", "hpc", "parameter sweep", "parallel", "batch", "fan out", "long running",
          "resume", "sbatch", "grid search"],
-        "@sweep(grid, target; setup=\"\", plot=nothing, resources=nothing, cap=0) do p … end",
-        """Run the body once per point in `grid`, as separate processes on a scheduler. Returns a
+        "@sweep(grid; plot=nothing, cap=0) do p … end   — inside a `#%% sweep cluster=<name>` cell",
+        """GOES IN A `#%% sweep` CELL, and takes NO target there: the cell header carries
+        `cluster=<name>`, and `walltime=`, `chunk=`, `data=` beside it. The name is resolved by each
+        machine against its own registry, which is what lets one notebook run against a laptop's
+        test cluster and a site's real one with nothing edited in a cell — and the ⚙ on the cell
+        edits all of it without touching Julia source. Creating the cell with kind `sweep` is what
+        makes that ⚙ exist; in a plain code cell the target has to be hard-coded in the body, the
+        header settings have nowhere to live, and nothing is configurable. Pass a target positionally
+        ONLY for a standalone `.jl` run outside Slate, which is also the only place `submit=true`
+        belongs — in a notebook the work starts when someone presses Submit on the card.
+        Run the body once per point in `grid`, as separate processes on a scheduler. Returns a
         `ShardedResult` IMMEDIATELY — as soon as the work is submitted, never on completion — and
         renders a live card: progress, rate, ETA, a unit grid, per-unit failures, and Cancel / Retry /
         Reset. Re-running the cell RECONCILES: it submits only what is missing, so reopening a
@@ -738,7 +747,9 @@ See also `save_asset`, `FileUpload`."""),
         definitions written by hand, for anything with no cell behind it.
         `plot = rows -> echart(…)` draws the units that have landed, on the card's own poll, so the
         chart fills as results arrive. See `paramgrid`, `SlurmTarget`, `LocalTarget`, `Sweep`.
-        `r = @sweep(paramgrid(β = 0:0.1:2, seed = 1:50), hpc; setup = "using MyPkg") do p
+        `#%% sweep id=scan cluster=hpc walltime=04:00:00`
+        `scan = @sweep(paramgrid(β = 0:0.1:2, seed = 1:50)) do p
+             using MyPkg
              MyPkg.simulate(p)
          end`"""),
 

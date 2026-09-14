@@ -63,10 +63,22 @@ results = @sweep paramgrid(; n = 1:64, seed = 1:20) do p
 end
 ```
 
+Note what the `@sweep` call does **not** say: where the work runs. That is `cluster=hpc` on the
+header, so the cell names a target rather than addressing one, and the ⚙ changes it without touching
+Julia. Make the cell a **Batch sweep** cell (the kind picker on the cell, or `#%% sweep`) — `@sweep`
+runs in an ordinary code cell too, but there the target has to be written into the body, `walltime=`
+and `chunk=` have nowhere to live, and there is no ⚙ to change any of it. Passing a target
+positionally is for a standalone `.jl` outside Slate, where there is no header to read.
+
 The cell is a **reconciler**, not a submit button. Running it again submits only what is missing: it
 never recomputes a unit that has already landed. That is what makes the header attributes safe to
 edit — resources are not part of the sweep's identity, so raising a walltime *resumes* the sweep
 rather than discarding the units that already finished.
+
+Running the cell never spends anything. It prepares the sweep — descriptors written, plan computed —
+and the card reads **ready**. Pressing **Submit** *starts* it, and from then on the card keeps
+submitting what is missing until it finishes or you cancel. `submit = true` on the `@sweep` call
+skips that approval, and is meant for a script with no card to ask from.
 
 Because it reconciles, the honest thing to do with a sweep cell is run it repeatedly. It tells you
 what is queued, what is running, what landed, and what failed its attempt budget.
@@ -213,6 +225,36 @@ the default columns because they repeat down a unit's whole block; name them to 
 
 Which is why the last step is unremarkable: a batch result and a value from an interactive worker are
 both just values in the notebook's namespace, and combining them is ordinary Julia.
+
+## Logging from a sweep
+
+Write with **`@info`, `@warn` and `@error`**, not `println`. The task runner installs a logger for
+them, so a record carries its level, when it happened, and where it came from, and keyword values
+sit beside the message rather than inside it:
+
+```julia
+#%% sweep id=runs cluster=hpc
+runs = @sweep paramgrid(; case = 1:500) do p
+    @info "starting" case = p.case
+    r = solve(p.case)
+    r.residual > 1e-3 && @warn "did not converge" case = p.case residual = r.residual
+    r
+end
+```
+
+```
+┌ Info 14:22:31.004: starting
+│   case = 3
+└ @ Main cell:runs:2
+```
+
+A record **declares** its level, and that is believed over its wording — an `@info` that mentions a
+failure stays info, so filtering a log to `error` gives you what went wrong rather than every line
+containing the word. Output that declares nothing — a bare `println`, a C library, the scheduler's
+own messages — is classified by its wording instead, which is the best that can be done for it.
+
+Colour is on: the stream is a file, so nothing can detect a terminal, and the viewer renders what
+the logger emits.
 
 ## Reading a job's output
 

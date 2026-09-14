@@ -4630,11 +4630,30 @@ function _script_src(mod::Module, path)
 end
 
 """
-    @sweep grid target [setup=…] [chunk=…] do p
+    @sweep grid [target] [setup=…] [chunk=…] do p
         …
     end
 
-Run the body once per row of `grid`, as batch work on `target`, and return a [`ShardedResult`].
+Run the body once per row of `grid`, as batch work, and return a [`ShardedResult`].
+
+Belongs in a `#%% sweep` cell, and takes NO target there:
+
+    #%% sweep id=scan cluster=hpc walltime=04:00:00
+    scan = @sweep(paramgrid(n = 1:64)) do p
+        simulate(p.n)
+    end
+
+The header is where the target and the resources live. `cluster=hpc` is a NAME, resolved by each
+machine against its own registry — which is what lets one notebook run against a laptop's test
+cluster and a site's real one with nothing edited in a cell. `walltime=`, `chunk=` and `data=` sit
+beside it, and the ⚙ on the cell edits all of them without touching Julia source. That ⚙ is offered
+on a sweep cell and nowhere else.
+
+In an ordinary code cell this still runs, and is a worse version of the same thing: the target must
+be written into the body, the header settings have nowhere to live, and nothing can be changed
+except by editing code. Passing `target` is for a STANDALONE SCRIPT — a `.jl` run outside Slate,
+where there is no header to read and no card to ask from. That is also the only place `submit=true`
+belongs; in a notebook the work starts when someone presses Submit.
 
 The body travels as SOURCE, so it must be self-contained apart from:
 
