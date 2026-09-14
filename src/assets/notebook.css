@@ -137,11 +137,29 @@ body.fullwidth .page { max-width:none; }   /* Full page width overrides the colu
    column visibly left the centre; on a narrow one there was none, which is why this never showed.
    Now it holds still until the dock would actually reach it, then gives way. */
 body.agent-open .page { margin-right:max(392px, calc((100% - var(--page-max, 980px)) / 2)); }
-@media (max-width:900px) { body.agent-open .page { margin-right:0; } }
 /* The TOC drawer mirrors the agent panel but on the LEFT: shift the notebook column right so the
-   outline and the cells never overlap (fixed 300px drawer). Falls back to overlay when narrow. */
+   outline and the cells never overlap (fixed 300px drawer). Falls back to overlay when narrow.
+   312 is the drawer's 300 plus the same 12px clearance the agent side reserves (392 for a 380
+   panel) — the MINIMUMS match, though with slack to hold still in, the narrower drawer naturally
+   leaves the wider gap. The reorder rail needs nothing extra: it lives inside `.page`'s own 20px
+   padding, which is there whether a drawer is open or not, and reserving room for it here as well
+   made this gap read as three times the one opposite. */
 body.toc-open .page { margin-left:max(312px, calc((100% - var(--page-max, 980px)) / 2)); }
-@media (max-width:900px) { body.toc-open .page { margin-left:0; } }
+/* BOTH docks open: the column is pinned on both sides, so there is no holding-still left to do —
+   and the centring term, taken on one side while the other sits at its minimum, is precisely what
+   made the two gaps unequal (the wider one read as half again the other). Reserve each dock's own
+   width and the column sits the same distance from either. Full width has always done this; the
+   two cases now agree rather than one of them being the special one. */
+body.toc-open.agent-open .page { margin-left:312px; margin-right:392px; }
+/* Narrow: a drawer stops pushing and OVERLAYS the column, so there is nothing to reserve — and the
+   margin the reorder rail sits in is underneath the TOC, so it stands down here and only here.
+   Spelled out for the both-open case too: a media query adds no specificity, so the plain selectors
+   alone would lose to the rule above. */
+@media (max-width:900px) {
+  body.agent-open .page, body.toc-open.agent-open .page { margin-right:0; }
+  body.toc-open .page, body.toc-open.agent-open .page { margin-left:0; }
+  body.toc-open .cellmove { display:none; }
+}
 /* Full width has no slack by definition — the column always runs up to the dock — and `--page-max`
    is not its width there, so the centring term above would be meaningless. Reserve outright. */
 body.fullwidth.agent-open .page { margin-right:392px; }
@@ -196,12 +214,42 @@ body.hyd-preview #runstale, body.hyd-preview #addcellbtn { opacity:.7; }
 .depflag { position:absolute; top:-9px; left:10px; z-index:6; background:var(--gold); color:#1a1400;
   font-size:.62rem; font-weight:700; padding:1px 6px; border-radius:6px; letter-spacing:.03em; cursor:pointer;
   box-shadow:0 1px 4px #0007; }
-/* While the dependency cone is shown, let the flagged cells' tab protrude past the
-   cell box (cells normally clip to their rounded corners via overflow:hidden). */
-.cell.dep-up, .cell.dep-focus { overflow:visible; }
+/* (The flagged cells' tab protrudes past the cell box; cells no longer clip — see `.cell` below.) */
 .cell { border:1px solid var(--border); border-left:3px solid var(--border); border-radius:8px;
-        margin:14px 0; background:var(--bg2); overflow:hidden;
+        margin:14px 0; background:var(--bg2); overflow:visible;
         scroll-margin-top:68px; }   /* jumps (DAG/TOC/nav) land the cell HEADER below the sticky topbar, with breathing room */
+/* The cell does NOT clip: the reorder rail below is positioned against it and has to reach outside
+   the box. Nothing else ever overflowed one — the header is the only child that paints a background,
+   every other child is transparent and shows the cell's own rounded fill — so the clip was there to
+   keep the header's top corners honest, and the header can do that itself. */
+.cellhead { border-radius:5px 7px 0 0; }   /* inner radius: 8px less the 3px left / 1px top border */
+/* Reorder rail. Move up/down used to sit in the header's action strip, a dozen buttons along at the
+   far right, which is nowhere near the end of the cell they move. Out in the page margin they cover
+   no cell content and read as what they are. The rail IS the hover zone — its padding extends the
+   target well past the two glyphs, so reaching the cell's top-left corner takes no precision — and
+   it lives inside `--page-pad`, the one horizontal space the column always has. */
+/* `right:100%` lands on the cell's PADDING box, which is inside its 3px left border — hence 5px of
+   padding-right: 3 to clear the border, 2 for the gap. The rest of the padding is pure hit area,
+   which costs nothing here: the rail is absolutely positioned, so its box pushes on nothing. */
+.cellmove { position:absolute; top:0; right:100%; z-index:7; display:flex; flex-direction:column;
+  gap:3px; padding:6px 5px 20px 14px; }
+.cellmove > button { width:18px; height:16px; padding:0; display:flex; align-items:center;
+  justify-content:center; font-size:.7rem; line-height:1; border-radius:5px;
+  background:var(--bg2); border:1px solid var(--border); color:var(--dim);
+  opacity:0; transition:opacity .12s, color .12s, border-color .12s; }
+.cellmove:hover > button, .cellmove:focus-within > button { opacity:1; }
+.cellmove > button:hover { color:var(--accent); border-color:var(--accent); }
+/* Gone in the reading postures, where the cell chrome is not on show at all — and for the second
+   cell of a `column=N` row, whose left is not the page margin but its neighbour. The TOC is NOT
+   here: it pushes the column right and the reservation above keeps the rail's margin clear, so the
+   two coexist. Only a drawer that OVERLAYS the column takes the rail down. */
+body.zen .cellmove, body.app .cellmove,
+.cell-row > .cell:not(:first-child) .cellmove { display:none; }
+/* The Files drawer is that case — up to 80vw, straight over the column. It signals `open` on itself
+   and nothing else needed to know, which is not a good enough reason to make it start announcing to
+   the body. Its own rule: one invalid selector voids the whole list, so `:has` does not get to take
+   the plain selectors above down with it. */
+body:has(.filespanel.open) .cellmove { display:none; }
 /* Side-by-side cells: a `column=N` (N≥2) tag rows a cell beside its predecessor (grouping in notebook.js).
    Equal-width flex columns so paired figures (e.g. an ECharts + a Makie plot) render at the same size. */
 .cell-row { display:flex; gap:16px; align-items:flex-start; }

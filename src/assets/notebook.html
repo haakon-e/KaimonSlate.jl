@@ -249,6 +249,9 @@
   <div class="aphead"><strong>🤖 Agent</strong><span id="apstatus" class="hint"></span>
     <button id="thinkbtn" onclick="toggleThink()" title="show/hide the agent's thinking" style="margin-left:auto">💭</button>
     <button onclick="clearChat()" title="clear chat history" style="margin-left:6px">🧹</button>
+    <!-- Model and permissions are settings, but they are read from HERE — so the panel that raises
+         the question carries the way to answer it, opened straight onto its own section. -->
+    <button onclick="openSettings('global', 'Agent')" title="Agent settings — model and permissions" style="margin-left:6px">⚙</button>
     <button id="apmaxbtn" onclick="toggleAgentMax()" title="maximize / restore the panel" style="margin-left:6px">⛶</button>
     <button class="pclose" onclick="toggleAgent()" title="close" style="margin-left:6px">✕</button></div>
   <div id="apmsgs" class="apmsgs"></div>

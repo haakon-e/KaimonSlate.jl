@@ -434,8 +434,9 @@ function cellHeaderInner(c) {
       (isCode ? `<button class="hidecode${c.codeHidden ? ' on' : ''}" onclick="toggleHideCode('${c.id}')" title="${c.codeHidden ? 'show code' : 'hide code — show only the output'}">${c.codeHidden ? '🙈' : '👁'}</button>` : '') +
       `<button class="tagbtn${(c.tags && c.tags.length) ? ' on' : ''}" onclick="openTagEditor('${c.id}', event)" title="cell tags${(c.tags && c.tags.length) ? ': ' + c.tags.join(', ') : ''}">🏷</button>` +
       editSrc +
-      `<button onclick="moveCell('${c.id}','up')" title="move up">↑</button>` +
-      `<button onclick="moveCell('${c.id}','down')" title="move down">↓</button>` +
+      // Move up / down are NOT here — they live on the reorder rail out in the page margin beside
+      // the cell (notebook.js `renderCell`), where they cover no content and sit at the end the cell
+      // moves towards rather than among a dozen buttons at the opposite corner.
       // Kind switch: show the TWO kinds this cell ISN'T, each converting on click. Markdown is always
       // last (code · web · md), so the prose toggle sits in a consistent spot.
       ['code', 'web', 'tool', 'md'].filter(k => k !== c.kind).map(k =>

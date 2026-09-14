@@ -610,7 +610,20 @@ function Cell({ cell, selectedId, selSet, live, focusId, editingId, collapsed })
   } else {
     body = html`<${Editor} cell=${c} /><div class="controls${(c.controls || []).length ? '' : ' empty'}" data-cell=${c.id}></div><div class="output"></div><div class="tables"></div><${EChartHost} cell=${c} /><div class="anim"></div>`;
   }
-  return html`<div ref=${ref} id=${'cell-' + c.id} data-cid=${c.id} class=${cls}>${header}${body}</div>`;
+  // Reorder rail: move up / down, out on the page margin to the LEFT of the cell rather than in the
+  // header's action strip at the opposite corner. Placement, hover zone and when it stands down are
+  // all `.cellmove` in notebook.css.
+  //
+  // A click moves the cell out from under the pointer, so the button has to let go of focus — the
+  // rail also shows on `:focus-within`, which left the arrows lit on a cell the pointer had left.
+  // Pointer clicks only: `detail` is 0 when the keyboard activates a button, and focus is the whole
+  // of what makes the rail reachable that way.
+  const step = dir => (e) => { if (e.detail) e.currentTarget.blur(); window.moveCell(c.id, dir); };
+  const moverail = html`<div class="cellmove">
+    <button title="move this cell up" onclick=${step('up')}>↑</button>
+    <button title="move this cell down" onclick=${step('down')}>↓</button>
+  </div>`;
+  return html`<div ref=${ref} id=${'cell-' + c.id} data-cid=${c.id} class=${cls}>${moverail}${header}${body}</div>`;
 }
 
 // Inter-cell insert affordance: a thin hover zone in the gap between rows (and above the first / below
