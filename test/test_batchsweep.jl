@@ -1410,6 +1410,30 @@ end
             @test_throws ErrorException Sweep.log_slice(r, "/etc/passwd")
             @test_throws ErrorException Sweep.log_search(r, "/etc/passwd", "root")
             @test_throws ErrorException Sweep.log_stat(r, "/etc/passwd")
+
+            # ── …and the same three as the viewer reaches them ──────────────────────────────
+            # The browser gets DATA, not markup. The viewer pages and searches a file the hub
+            # would not send whole, so a panel rendered here could not do its job. `opts` is a
+            # NamedTuple because that is the shape every `slate_on` handler is given.
+            act(a; kw...) = Sweep.handle_action(t, r.run, r.params, r.keys, a;
+                                                arg = path, opts = (; kw...))
+            lst = Sweep.handle_action(t, r.run, r.params, r.keys, "logs")["loglist"]
+            @test any(f -> f["path"] == path, lst)
+            f = lst[findfirst(f -> f["path"] == path, lst)]
+            @test f["bytes"] == sz && f["name"] == basename(path) && !isempty(f["job"])
+
+            @test act("log_stat")["bytes"] == sz
+            # Numbers survive arriving as strings: a browser is free to send either.
+            sl = act("log_slice"; offset = "-4096", nbytes = "4096")
+            @test sl["size"] == sz && sl["to"] == sz - 1 && !isempty(sl["text"])
+
+            se = act("log_search"; pattern = "ERROR", limit = 5)
+            @test se["total"] == 12 && length(se["hits"]) == 5 && se["capped"]
+            @test se["hits"][1]["line"] == 5_000
+
+            # A read is a BARE reply: a viewer polling a growing file must not drag a status
+            # payload along behind every tick.
+            @test !haskey(act("log_stat"), "state")
         end
     end
 
@@ -1449,7 +1473,7 @@ end
             @test !haskey(poll, "logs")
             @test "logs" in [a[1] for a in poll["actions"]]
             got = Sweep.handle_action(t, r.run, r.params, r.keys, "logs")
-            @test occursin("Exceeded job memory limit", got["logs"])
+            @test any(f -> f["job"] == name, got["loglist"])
             # …and it is a question, not a mutation: nothing about the sweep moved.
             @test got["done"] == poll["done"] && got["state"] == poll["state"]
         end
@@ -1487,19 +1511,24 @@ end
             e2 = try; Sweep.log_tail(t, r.run, "$(new); rm -rf /"); "" catch x; sprint(showerror, x); end
             @test occursin("no such log", e2)
 
-            # The card opens the newest file on the first press, which is where a dead job explains
-            # itself, and marks the severity so it is findable without reading every line.
+            # What the card hands the viewer is the LISTING, and no file contents at all. The viewer
+            # asks for the bytes it wants; sending a tail here would be sending the one part of the
+            # file the reader is about to page past, and would put a size bound on a thing that has
+            # none.
             got = Sweep.handle_action(t, r.run, r.params, r.keys, "logs")
-            @test occursin(basename(new), got["logs"])
-            @test occursin(basename(old), got["logs"])    # …and lists the others to pick from
-            @test occursin("no method matching", got["logs"])
-            @test occursin("--red", got["logs"])          # the ERROR line is coloured
-            @test occursin("Refresh", got["logs"])
-            @test !occursin("all fine", got["logs"])      # the unopened file is not dragged along
+            lst = got["loglist"]
+            @test [f["path"] for f in lst] == [new, old]        # newest first
+            @test [f["name"] for f in lst] == basename.([new, old])
+            @test all(f -> f["bytes"] > 0 && f["modified"] > 0 && f["job"] == name, lst)
+            @test !any(k -> occursin("all fine", string(got[k])), collect(keys(got)))
 
-            # Naming one opens that one instead.
-            pick = Sweep.handle_action(t, r.run, r.params, r.keys, "logs"; arg = old)
-            @test occursin("all fine", pick["logs"])
+            # The severity vocabulary travels WITH the listing, so the viewer marks a line the way
+            # the card colours it rather than keeping a second opinion about what an error is.
+            sev = got["logsev"]
+            @test occursin("error", sev["error"][1]) && occursin("warn", sev["warn"][1])
+            @test Sweep._log_severity("ERROR: LoadError: no method matching") === :bad
+            # …and the sources are the ones Julia itself matches with, not a restatement.
+            @test Regex(sev["error"][1], "i") == Sweep._LOG_BAD
         end
     end
 

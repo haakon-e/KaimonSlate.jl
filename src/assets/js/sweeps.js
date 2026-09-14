@@ -657,9 +657,11 @@ function showOptMenu(row, inp) {
   function close() { panel() && panel().classList.remove('open'); }
 
   window.slateSweeps = {
-    // Called by each card on every poll. `status` is the payload the sweep's channel returned.
-    report(key, cellId, status) {
-      sweeps.set(key, { key, cellId, status, ts: Date.now() });
+    // Called by each card on every poll. `status` is the payload the sweep's channel returned, and
+    // `ch` is that channel — which is what lets the log viewer read a sweep whose card it was not
+    // opened from.
+    report(key, cellId, status, ch) {
+      sweeps.set(key, { key, cellId, status, ch, ts: Date.now() });
       // Mark the owning CELL with the sweep's state, so its rail reads as "work still out there"
       // from across the notebook. A sweep cell's own run took milliseconds and finished long ago;
       // without this the cell chrome would report that and say nothing about the job.

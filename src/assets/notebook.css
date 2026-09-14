@@ -3078,3 +3078,64 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
 .nbfind-opt[data-opt="word"] { text-decoration:underline; }
 .nbfind-opt.on { color:var(--accent); border-color:var(--accent); background:var(--ovl); }
 .nbfind-x { margin-left:2px; }
+
+/* ── Log viewer ──────────────────────────────────────────────────────────────────────────────
+   A reader, not a dialog: it is sized to the window rather than to its content, because the
+   content is a file that does not end. The list of files and the file itself sit side by side so
+   that comparing two elements of a failed job is a click, not a re-open. */
+.logv-bg .logv { max-width:min(1400px, 94vw); width:94vw; height:88vh; display:flex; flex-direction:column;
+  padding:0; overflow:hidden; }
+.logv-head { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--border); }
+.logv-head strong { font-size:.95rem; }
+.logv-sweep { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:5px;
+  padding:2px 6px; font-size:.8rem; max-width:280px; }
+.logv-err { color:var(--red,#e57575); font-size:.78rem; flex:1 1 auto; }
+.logv-x { margin-left:auto; background:none; border:none; color:var(--dim); font-size:1rem; cursor:pointer; }
+.logv-x:hover { color:var(--text); }
+
+.logv-body { display:flex; flex:1 1 auto; min-height:0; }
+.logv-side { width:270px; flex:0 0 auto; border-right:1px solid var(--border); display:flex; flex-direction:column; min-height:0; }
+.logv-ffilter { margin:8px; background:var(--bg); color:var(--text); border:1px solid var(--border);
+  border-radius:5px; padding:4px 7px; font-size:.8rem; }
+.logv-sorts { display:flex; gap:4px; padding:0 8px 6px; }
+.logv-sorts button, .logv-levels button, .logv-order, .logv-pause, .logv-icase, .logv-rx,
+.logv-prev, .logv-next, .logv-jump {
+  background:var(--bg); color:var(--dim); border:1px solid var(--border); border-radius:5px;
+  padding:2px 7px; font-size:.74rem; cursor:pointer; }
+.logv-sorts button.on, .logv-levels button.on, .logv-pause.on, .logv-icase.on, .logv-rx.on {
+  color:var(--text); border-color:var(--val); background:color-mix(in srgb, var(--val) 14%, transparent); }
+.logv-files { flex:1 1 auto; overflow:auto; min-height:0; }
+.logv-f { display:flex; gap:8px; align-items:baseline; padding:3px 8px; cursor:pointer;
+  font-size:.74rem; font-family:'Cascadia Code',ui-monospace,monospace; }
+.logv-f:hover { background:color-mix(in srgb, var(--dim) 12%, transparent); }
+.logv-f.on { background:color-mix(in srgb, var(--val) 16%, transparent); }
+.logv-fn { color:var(--val); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto; }
+.logv-fb { color:var(--dim); flex:0 0 auto; }
+.logv-fw { color:var(--dim); opacity:.7; flex:0 0 auto; font-size:.68rem; }
+.logv-none { padding:10px; font-size:.78rem; color:var(--dim); line-height:1.5; }
+
+.logv-main { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; min-height:0; }
+.logv-bar, .logv-bar2 { display:flex; align-items:center; gap:8px; padding:7px 12px; }
+.logv-bar { border-bottom:1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.logv-bar2 { border-bottom:1px solid var(--border); }
+.logv-levels { display:flex; gap:4px; }
+.logv-search { flex:1 1 auto; min-width:120px; background:var(--bg); color:var(--text);
+  border:1px solid var(--border); border-radius:5px; padding:3px 8px; font-size:.8rem; }
+.logv-hits, .logv-meta { font-size:.74rem; color:var(--dim); white-space:nowrap; }
+.logv-jump { margin-left:auto; color:var(--text); border-color:var(--val); }
+
+/* The reading surface. `pre-wrap` rather than a horizontal scroller: a wrapped traceback is still
+   readable, and a log line can be arbitrarily long. */
+.logv-pane { flex:1 1 auto; overflow:auto; min-height:0; background:var(--bg); }
+.logv-pre { margin:0; padding:8px 12px; font-family:'Cascadia Code',ui-monospace,monospace;
+  font-size:.72rem; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+.logv-l { display:block; }
+.logv-info { color:var(--text); opacity:.72; }
+.logv-warn { color:var(--amber,#d9a441); }
+.logv-error { color:var(--red,#e57575); }
+.logv-l.hit { background:color-mix(in srgb, var(--val) 22%, transparent); border-radius:3px; }
+.logv-pre mark { background:color-mix(in srgb, var(--amber,#d9a441) 45%, transparent);
+  color:var(--text); border-radius:2px; }
+.logv-t { color:var(--dim); }
+.logv-p { color:var(--val); }
+.logv-n { color:color-mix(in srgb, var(--val) 70%, var(--text)); }

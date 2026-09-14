@@ -214,6 +214,34 @@ the default columns because they repeat down a unit's whole block; name them to 
 Which is why the last step is unremarkable: a batch result and a value from an interactive worker are
 both just values in the notebook's namespace, and combining them is ordinary Julia.
 
+## Reading a job's output
+
+The failures that cost the most time leave **no manifest** — an OOM kill, a walltime cut, a prologue
+that failed — so `results.errors` is empty and the only account of what happened is what the job
+printed. **Logs** on a sweep card opens it.
+
+The viewer never holds a file, only a window onto one, so a job that printed a gigabyte opens as
+fast as one that printed a line:
+
+| | |
+| --- | --- |
+| **The file list** | every element of every job in the sweep, sortable by time, size or name, filterable by name. Switch sweeps from the menu in the header to read another cell's jobs without closing it. |
+| **Levels** | `all` / `info` / `warn` / `error`, counted over the **whole file** — "error 40" means the file holds forty, not forty of what is on screen. |
+| **Search** | over the whole file too, wherever it lives, with ▲▼ to walk the matches. A match past the end of the window is found and jumped to without reading what precedes it. |
+| **Follow** | a growing file is re-read every few seconds while you are at the end that grows; **pause** stops it, and scrolling away shows *new output* rather than moving the text under you. |
+
+Newest content is at the top by default. Flip it with **oldest first** when you are reading a
+traceback, which is written downwards.
+
+The same files are reachable from Julia when you would rather grep than scroll:
+
+```julia
+Sweep.log_files(results)                       # what there is
+Sweep.log_search(results, path, "OOM")         # the whole file, wherever it lives
+Sweep.log_slice(results, path; offset = -4096) # the last 4KB
+Sweep.logs(results)                            # every job's tail, headed by job
+```
+
 ## SLURM and PBS
 
 A target's **Kind** picks the scheduler, and it is the only thing about a cluster that changes:

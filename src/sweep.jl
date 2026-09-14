@@ -2874,7 +2874,7 @@ function logs(t::SweepTarget, run::AbstractString; lines::Integer = 200,
 end
 
 """
-    handle_action(target, run, params, keys, action; plot = nothing) -> payload
+    handle_action(target, run, params, keys, action; plot = nothing, opts = Dict()) -> payload
 
 Apply a control the card offers, then report the resulting state so the button press and the
 refresh are one round trip.
@@ -2882,10 +2882,18 @@ refresh are one round trip.
 `cancel` and `reset` are destructive in different degrees and are kept apart deliberately: cancel
 STOPS a sweep and keeps every finished unit, so resuming costs only what is left; reset throws the
 results away.
+
+`arg` names a file for the log actions; `opts` is the whole request the browser sent — a NamedTuple,
+the shape every `slate_on` handler receives — so an action needing more than one value does not have
+to encode them into a string.
 """
+# A number out of a browser request, which may arrive as a number or as a string.
+_opt_int(opts, key::Symbol, default::Int) =
+    (v = get(opts, key, nothing); v === nothing ? default :
+     v isa Integer ? Int(v) : something(tryparse(Int, string(v)), default))
 function handle_action(target::SweepTarget, run::AbstractString, params, keys,
                        action::AbstractString; plot = nothing, notify = nothing,
-                       landed = nothing, arg::AbstractString = "")
+                       landed = nothing, arg::AbstractString = "", opts = (;))
     sync_in!(target)
     root = store_root(target)
     l = launcher_for(target)
@@ -2906,20 +2914,49 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
     # Also not a mutation — and deliberately only on request. For a cluster this is a round trip to
     # the login node, so it must never ride the poll: a card left open on a finished sweep would be
     # tailing files over ssh every thirty seconds for the rest of the session.
+    #
+    # What the viewer asks for is STRUCTURED, not markup. It pages a file by byte range and searches
+    # the whole of it, neither of which a panel rendered here could do — the file can be larger than
+    # anything worth sending, and a rendered tail is the one part of it the reader already saw.
     if action == "logs"
         out = status_payload(target, run, params, keys; plot, advance = false)
-        out["logs"] = try
-            files = log_files(target, run)
-            # An empty argument lists; a named file opens. Defaulting an empty ask to the NEWEST
-            # file is the one press that is almost always right — a job that died explains itself
-            # in the element that died, and that is the one at the top.
-            want = isempty(arg) ? (isempty(files) ? "" : String(files[1].path)) : String(arg)
-            _logs_html(files, want, isempty(want) ? "" : log_tail(target, run, want))
+        try
+            out["loglist"] = [Dict{String,Any}("path" => String(f.path),
+                                               "name" => basename(String(f.path)),
+                                               "job" => String(f.job),
+                                               "bytes" => Int(f.bytes),
+                                               "modified" => Int(f.modified))
+                              for f in log_files(target, run)]
         catch e
-            string("<div style='margin-top:8px;font-size:12px;color:var(--red,#e57575)'>",
-                   _esc(first(sprint(showerror, e), 300)), "</div>")
+            out["loglist"] = Dict{String,Any}[]
+            out["logerr"] = first(sprint(showerror, e), 300)
         end
+        # What counts as an error or a warning, sent rather than restated in JS — the viewer marks
+        # the lines it is showing and the card colours the ones it renders, and the two disagreeing
+        # about the same line is the bug this prevents.
+        out["logsev"] = Dict{String,Any}("error" => [_LOG_BAD_SRC, _LOG_BAD_COUNT_SRC],
+                                         "warn" => [_LOG_WARN_SRC])
         return out
+    end
+    # The three reads, each a bare reply rather than a status payload: a viewer polling a growing
+    # file must not drag a manifest scan along behind every tick.
+    if action == "log_stat"
+        st = log_stat(target, run, arg)
+        return Dict{String,Any}("bytes" => st.bytes, "modified" => st.modified)
+    end
+    if action == "log_slice"
+        s = log_slice(target, run, arg; offset = _opt_int(opts, :offset, -(1 << 16)),
+                                        nbytes = _opt_int(opts, :nbytes, 1 << 16))
+        return Dict{String,Any}("text" => s.text, "from" => s.from, "to" => s.to, "size" => s.size)
+    end
+    if action == "log_search"
+        r = log_search(target, run, arg, String(get(opts, :pattern, ""));
+                       ignorecase = get(opts, :ignorecase, false) == true,
+                       regex = get(opts, :regex, false) == true,
+                       limit = _opt_int(opts, :limit, 1000))
+        return Dict{String,Any}("total" => r.total, "capped" => r.capped,
+                                "hits" => [Dict{String,Any}("offset" => h.offset, "line" => h.line,
+                                                            "text" => h.text) for h in r.hits])
     end
     if action == "submit"
         BatchSweep.arm!(root, run)
@@ -3448,78 +3485,21 @@ end
 # Words that mean it went wrong on their own. `failed` and `cancelled` are deliberately NOT here:
 # the runner's own success line reads "4 ran, 0 skipped, 0 failed of 4", and colouring that red
 # makes the most common line in a healthy log look like the thing you are hunting for.
-const _LOG_BAD = r"(?i)\b(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\b"
+#
+# Held as SOURCE, and served to the browser (`logs` → `logsev`), because the viewer classifies the
+# lines it has on screen and the card colours the ones it renders — two places that must agree about
+# what counts as an error. The syntax is the intersection both engines read: no inline `(?i)`, which
+# JavaScript has no notion of, so the fold is a flag on each side instead.
+const _LOG_BAD_SRC = raw"\b(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\b"
 # …so a count of failures is matched by its NUMBER instead, and only a non-zero one.
-const _LOG_BAD_COUNT = r"(?i)\b(?!0\b)\d+\s+(failed|failures?|errors?)\b"
-const _LOG_WARN = r"(?i)\b(warn|warning|deprecat)"
+const _LOG_BAD_COUNT_SRC = raw"\b(?!0\b)\d+\s+(failed|failures?|errors?)\b"
+const _LOG_WARN_SRC = raw"\b(warn|warning|deprecat)"
+const _LOG_BAD = Regex(_LOG_BAD_SRC, "i")
+const _LOG_BAD_COUNT = Regex(_LOG_BAD_COUNT_SRC, "i")
+const _LOG_WARN = Regex(_LOG_WARN_SRC, "i")
 
 _log_severity(line) = (occursin(_LOG_BAD, line) || occursin(_LOG_BAD_COUNT, line)) ? :bad :
                       occursin(_LOG_WARN, line) ? :warn : :plain
-
-# Colour AFTER escaping. Matching on raw text and then escaping would let a log line's own angle
-# brackets close the span the match had just opened.
-function _log_body_html(txt::AbstractString)
-    io = IOBuffer()
-    print(io, "<pre style='max-height:320px;overflow:auto;margin:6px 0 0;font-size:11px;",
-              "white-space:pre-wrap;font-family:ui-monospace,monospace;line-height:1.45'>")
-    for line in split(String(txt), '\n')
-        sev = _log_severity(line)
-        colour = sev === :bad  ? "var(--red,#e57575)" :
-                 sev === :warn ? "var(--amber,#d9a441)" : ""
-        isempty(colour) ? print(io, "<span style='opacity:.7'>", _esc(line), "</span>\n") :
-                          print(io, "<span style='color:", colour, "'>", _esc(line), "</span>\n")
-    end
-    print(io, "</pre>")
-    return String(take!(io))
-end
-
-_log_when(u::Integer) = u <= 0 ? "" :
-    Dates.format(Dates.unix2datetime(u) + _localoffset(), "yyyy-mm-dd HH:MM:SS")
-
-const _LOG_LIST_SHOWN = 40
-
-"""
-Panel markup: the files newest first, with the opened one's contents under it.
-
-A list rather than a dump. One `tail` over every element of every job could not be sorted, could not
-be opened selectively, and grew without bound as a sweep did — so the file that explained the
-failure was somewhere in the middle of it.
-"""
-function _logs_html(files::AbstractVector, opened::AbstractString, body::AbstractString)
-    isempty(files) && return string(
-        "<div style='margin-top:8px;font-size:12px;opacity:.6'>",
-        "No job output yet. A scheduler writes it once the job starts, and PBS only copies it ",
-        "back when the job ends.</div>")
-    io = IOBuffer()
-    print(io, "<div style='margin-top:8px'>")
-    print(io, "<div style='display:flex;align-items:center;gap:8px;font-size:11px;opacity:.6;",
-              "margin-bottom:4px'><span>", length(files), " log file",
-              length(files) == 1 ? "" : "s", ", newest first</span>",
-              "<button data-sw-log='' style='", _BTN_STYLE, ";margin-left:auto'>Refresh</button>",
-              "</div>")
-    print(io, "<div style='max-height:150px;overflow:auto'>")
-    for f in first(files, _LOG_LIST_SHOWN)
-        on = String(f.path) == String(opened)
-        print(io, "<div data-sw-log='", _esc(String(f.path)),
-                  "' style='display:flex;gap:10px;padding:2px 4px;border-radius:4px;cursor:pointer;",
-                  "font-size:11px;font-family:ui-monospace,monospace",
-                  on ? ";background:color-mix(in srgb, var(--val,#4ec9b0) 14%, transparent)" : "",
-                  "'>",
-                  "<span style='color:var(--val,#4ec9b0)'>", _esc(basename(String(f.path))), "</span>",
-                  "<span style='opacity:.55'>", _log_when(f.modified), "</span>",
-                  "<span style='opacity:.55;margin-left:auto'>", _bytes(f.bytes), "</span></div>")
-    end
-    length(files) > _LOG_LIST_SHOWN &&
-        print(io, "<div style='font-size:11px;opacity:.5;padding:2px 4px'>… and ",
-                  length(files) - _LOG_LIST_SHOWN, " more</div>")
-    print(io, "</div>")
-    isempty(opened) ?
-        print(io, "<div style='font-size:11px;opacity:.5;margin-top:6px'>",
-                  "pick a file to read it</div>") :
-        print(io, _log_body_html(body))
-    print(io, "</div>")
-    return String(take!(io))
-end
 
 # The failed units, collapsed. The parameters matter more than the traceback at a glance, so they
 # lead: the question is almost always "which corner of the grid breaks?" rather than "how?".
@@ -3639,9 +3619,6 @@ function Base.show(io::IO, ::MIME"text/html", r::ShardedResult)
     print(io, "<div data-sw='data'>", _safe_data_html(r), "</div>")
     println(io, "<div data-sw='why'>", _why_html(p), "</div>")
     println(io, "<div data-sw='fails'>", _fails_html(getfield(r, :rows)), "</div>")
-    # Empty at render and filled only by the Logs button. The poll never carries this key, so what
-    # was fetched stays put instead of being cleared by the next tick.
-    println(io, "<div data-sw='logs'></div>")
 
     _actions(io, r)
     _live_script(io, r)
@@ -3806,7 +3783,9 @@ function _live_script(io, r::ShardedResult)
         // answers "what is this notebook doing" when that cell is scrolled away or collapsed.
         if (window.slateSweeps) {
           var cell = root.closest('[data-cid]');
-          window.slateSweeps.report("$(id)", cell ? cell.dataset.cid : "", s);
+          // The CHANNEL rides along so the log viewer can read any sweep in the notebook, not
+          // only the card it was opened from.
+          window.slateSweeps.report("$(id)", cell ? cell.dataset.cid : "", s, "$(doch)");
         }
         if (s.chart) drawChart(s.chart);
         else if (s.chart === null) clearChart();
@@ -3816,9 +3795,7 @@ function _live_script(io, r::ShardedResult)
         // Why it stopped, and which units failed. Rendered by Julia and swapped in whole, so the
         // browser holds no second copy of this markup to drift from the cell's own render. Only on
         // CHANGE, so an open <details> is not collapsed underneath the reader on every poll.
-        // `logs` is in the list but never in a POLL payload — only the Logs button's reply carries
-      // it, so a fetched tail stays on screen instead of being wiped by the next tick.
-      ["why", "fails", "data", "logs"].forEach(function(k){
+      ["why", "fails", "data"].forEach(function(k){
           var el = root.querySelector('[data-sw="' + k + '"]');
           if (!el || s[k] === undefined) return;
           if (el.dataset.h !== s[k]) { el.dataset.h = s[k]; el.innerHTML = s[k]; }
@@ -3909,6 +3886,12 @@ function _live_script(io, r::ShardedResult)
       }
       function runAction(act, btn){
         if (btn.disabled) return;
+        // Logs is not a control — it opens a reader. The viewer talks to this card's channel
+        // directly, which is also how it switches between the notebook's other sweeps.
+        if (act === "logs") {
+          if (window.slateLogs) window.slateLogs.open("$(id)", "$(doch)");
+          return;
+        }
         var was = btn.textContent;
         // Disabled for the confirmation too, not just the call: an impatient second click would
         // otherwise stack a second dialog on the first.
@@ -3937,23 +3920,6 @@ function _live_script(io, r::ShardedResult)
           });
         });
       }
-      // The log list is swapped in as markup, so its rows cannot carry handlers of their own —
-      // they would be discarded on the next swap. One listener on the card, matching the row that
-      // was actually clicked, survives every redraw.
-      root.addEventListener("click", function(ev){
-        var el = ev.target.closest ? ev.target.closest('[data-sw-log]') : null;
-        if (!el || !root.contains(el)) return;
-        ev.preventDefault();
-        var host = root.querySelector('[data-sw="logs"]');
-        if (host) host.style.opacity = ".5";      // the fetch crosses to a login node; say so
-        if (!window.slateCall) return;
-        window.slateCall("$(doch)", { action: "logs", arg: el.dataset.swLog || "" })
-          .then(paint)
-          .catch(function(e){
-            if (host) { host.style.opacity = ""; host.textContent = String(e); }
-          })
-          .then(function(){ if (host) host.style.opacity = ""; });
-      });
 
       // Rebuild the control row only when the SET of actions changed, so a click never lands on a
       // button that a poll replaced underneath it mid-press.
@@ -4297,7 +4263,7 @@ function run_sweep(target::SweepTarget, params::AbstractVector, body_src::Abstra
                  a -> handle_action(target, run, ps, ks, String(get(a, :action, ""));
                                     plot, notify = note,
                                     landed = () -> (rref[] === nothing || refresh!(rref[])),
-                                    arg = String(get(a, :arg, ""))))
+                                    arg = String(get(a, :arg, "")), opts = a))
     end
 
     pl = BatchSweep.plan(root, run; launcher)

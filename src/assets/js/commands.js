@@ -302,6 +302,15 @@ R({ id: 'view.sessions', label: 'Sign in to a host… (cluster / region authenti
     group: 'Panels', ctx: ['command'],
     available: _has('openSessions'), run: () => _fn('openSessions') });
 
+// The viewer switches between every sweep in the notebook, so it does not need a card selected to
+// be useful — `sweep.logs` below opens it on the cell you are in, this opens it on the sweep that
+// reported most recently, which is the one still running.
+const _liveSweeps = () =>
+  (window.slateSweeps ? window.slateSweeps.all() : []).filter(s => s.ch).sort((a, b) => b.ts - a.ts);
+R({ id: 'view.logs', label: 'Job output… (read a sweep’s logs)', group: 'Panels', ctx: ['command'],
+    available: () => !!window.slateLogs && _liveSweeps().length > 0,
+    run: () => { const s = _liveSweeps()[0]; if (s) window.slateLogs.open(s.key, s.ch); } });
+
 // ── Sweeps ────────────────────────────────────────────────────────────────────
 // A batch sweep's controls live on its card, and these drive that card's own button rather than
 // calling the action channel directly. The confirmations, the disable-while-in-flight and the label

@@ -181,7 +181,7 @@ export function Clusters() {
           <input class="rppn" type="text" inputmode="numeric" autocomplete="off"
                  placeholder=${procsDefault.value || 'auto'} title="how many tasks run in parallel on this machine"
                  value=${kProcs.value} onInput=${ev => kProcs.value = ev.target.value}/>
-          <span class="pddim">tasks in parallel; blank = the Slate setting${procsDefault.value ? ' (' + procsDefault.value + ')' : ''}</span></div>`
+          <span class="pddim">tasks in parallel${procsDefault.value ? ' (default ' + procsDefault.value + ')' : ''}</span></div>`
       : html`
         <div class="rpprow"><label>Login host</label>
           <input class="rpppre" autocomplete="off" spellcheck="false" placeholder="ssh host you submit from"
