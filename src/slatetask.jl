@@ -34,6 +34,7 @@ module SlateTask
 import Serialization
 import TOML
 import Dates
+import Logging
 
 const MemoStore = parentmodule(@__MODULE__).MemoStore
 
@@ -518,6 +519,38 @@ function artifacts(root::AbstractString, key::AbstractString)
     return [x for x in get(d, "artifacts", Any[]) if x isa AbstractDict]
 end
 
+# ── What a job's output looks like ───────────────────────────────────────────────────────────
+# A unit writes with `@info` / `@warn` / `@error`, and this is what makes that worth recommending.
+# Julia's default logger against a FILE gives no colour and no time, which is most of what a batch
+# log is read for: a job that ran for six hours needs to say when each thing happened, and a reader
+# scanning megabytes needs the level to be visible without reading the sentence.
+#
+#     ┌ Info 14:22:31.004: processed 1200 records
+#     │   batch = 3
+#     └ @ Main run.jl:12
+#
+# The level stays first, immediately after the box character, because that is what the viewer's
+# filter reads and what the eye lands on. The DATE is not on every record — it is the header line
+# below, printed once, since a per-record date is ten characters of the same thing on every line.
+_log_clock() = Dates.format(Dates.now(), "HH:MM:SS.sss")
+
+function _task_logger(io::IO = stderr)
+    # `:color => true` unconditionally: the stream IS a file, so nothing can detect a terminal here,
+    # and the viewer renders the codes. `log_stat`-driven reading strips them for classification.
+    # `Info`, not `Debug`: a floor of Debug enables debug logging in every package the unit loads,
+    # and a job's output is already the largest thing it produces. A body that wants its own debug
+    # records asks for them with its own `with_logger`.
+    return Logging.ConsoleLogger(IOContext(io, :color => true), Logging.Info;
+        meta_formatter = (lvl, _mod, _grp, _id, file, line) -> begin
+            c = lvl < Logging.Info  ? :light_black :
+                lvl < Logging.Warn  ? :cyan :
+                lvl < Logging.Error ? :yellow : :red
+            name = lvl < Logging.Info ? "Debug" : lvl < Logging.Warn ? "Info" :
+                   lvl < Logging.Error ? "Warning" : "Error"
+            return c, "$(name) $(_log_clock()):", "@ $(_mod) $(basename(String(file))):$(line)"
+        end)
+end
+
 """
     main(args = ARGS)
 
@@ -529,12 +562,22 @@ function main(args = ARGS)
     length(args) >= 2 ||
         (println(stderr, "usage: slatetask.jl <cas-root> <chunk-key>..."); return 2)
     root = String(args[1])
-    # Several chunks per process, run one after another. A process is expensive (a whole Julia
-    # start plus package loads), so the alternative — one process per chunk — is both slow and,
-    # run locally, a fast route to exhausting memory.
-    for chunk in args[2:end]
-        r = run_chunk(root, String(chunk))
-        println("chunk $(chunk): $(r.ran) ran, $(r.skipped) skipped, $(r.failed) failed of $(r.total)")
+    # Slate's own lines go through the same logger as the body's, so one log has one shape.
+    Logging.with_logger(_task_logger()) do
+        @info "task starting" at = Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS") host = gethostname() julia = string(VERSION) chunks = length(args) - 1
+        # Several chunks per process, run one after another. A process is expensive (a whole Julia
+        # start plus package loads), so the alternative — one process per chunk — is both slow and,
+        # run locally, a fast route to exhausting memory.
+        for chunk in args[2:end]
+            r = run_chunk(root, String(chunk))
+            # The failure count leads when it is non-zero: it is the number a reader is looking for,
+            # and the level makes the line findable by the viewer's filter without reading it.
+            if r.failed > 0
+                @error "chunk finished with failures" chunk ran = r.ran skipped = r.skipped failed = r.failed total = r.total
+            else
+                @info "chunk finished" chunk ran = r.ran skipped = r.skipped failed = r.failed total = r.total
+            end
+        end
     end
     return 0
 end

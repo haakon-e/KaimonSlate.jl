@@ -2934,7 +2934,8 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
         # What counts as an error or a warning, sent rather than restated in JS — the viewer marks
         # the lines it is showing and the card colours the ones it renders, and the two disagreeing
         # about the same line is the bug this prevents.
-        out["logsev"] = Dict{String,Any}("error" => [_LOG_BAD_SRC, _LOG_BAD_COUNT_SRC],
+        out["logsev"] = Dict{String,Any}("declared" => _LOG_LEVEL_SRC,
+                                         "error" => [_LOG_BAD_SRC, _LOG_BAD_COUNT_SRC],
                                          "warn" => [_LOG_WARN_SRC])
         return out
     end
@@ -3486,20 +3487,47 @@ end
 # the runner's own success line reads "4 ran, 0 skipped, 0 failed of 4", and colouring that red
 # makes the most common line in a healthy log look like the thing you are hunting for.
 #
-# Held as SOURCE, and served to the browser (`logs` → `logsev`), because the viewer classifies the
-# lines it has on screen and the card colours the ones it renders — two places that must agree about
-# what counts as an error. The syntax is the intersection both engines read: no inline `(?i)`, which
-# JavaScript has no notion of, so the fold is a flag on each side instead.
+# Held as SOURCE, because three engines read these: Julia colours the card, JavaScript marks the
+# lines on screen, and ripgrep counts them over a whole file. The syntax is the intersection of all
+# three — no inline `(?i)`, which JavaScript has no notion of, so the fold is a flag on each side;
+# and no look-around, which Rust's engine does not implement at all and silently never matches.
 const _LOG_BAD_SRC = raw"\b(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\b"
 # …so a count of failures is matched by its NUMBER instead, and only a non-zero one.
-const _LOG_BAD_COUNT_SRC = raw"\b(?!0\b)\d+\s+(failed|failures?|errors?)\b"
+const _LOG_BAD_COUNT_SRC = raw"\b[1-9][0-9]*\s+(failed|failures?|errors?)\b"
 const _LOG_WARN_SRC = raw"\b(warn|warning|deprecat)"
+# A line that NAMES its level is believed, and nothing else is consulted. `@info "0 errors so far"`
+# contains the word `error` and is not one; the patterns above are for output that declares nothing
+# — a bare `println`, a C library, a scheduler's own messages. This is the shape Julia's logger
+# writes, which is what the task runner installs and what a sweep body is meant to use.
+const _LOG_LEVEL_SRC = raw"^\s*[┌\[]\s*(Error|Warning|Info|Debug)\b"
+const _LOG_LEVEL = Regex(_LOG_LEVEL_SRC)
 const _LOG_BAD = Regex(_LOG_BAD_SRC, "i")
 const _LOG_BAD_COUNT = Regex(_LOG_BAD_COUNT_SRC, "i")
 const _LOG_WARN = Regex(_LOG_WARN_SRC, "i")
 
-_log_severity(line) = (occursin(_LOG_BAD, line) || occursin(_LOG_BAD_COUNT, line)) ? :bad :
-                      occursin(_LOG_WARN, line) ? :warn : :plain
+_declared_level(line) = (m = match(_LOG_LEVEL, line); m === nothing ? nothing :
+                         m.captures[1] == "Error" ? :bad :
+                         m.captures[1] == "Warning" ? :warn : :plain)
+
+# The logger colours its own box characters, so the escape codes arrive BEFORE the `┌` and a
+# pattern anchored at the start of the line never sees it. Nor does the fallback rescue it: in
+# `\e[1mError` the `m` of the escape code is a word character, so `\berror\b` does not match either.
+# Taken off first, which is also what the viewer does (`slateAnsiText`).
+#
+# Spelled out here rather than reached for in the parent module: this file is included into a BARE
+# module on purpose — that is how the worker builds it — and a parent that happens to carry
+# `termcook.jl` is a property of two of its three callers, not of the file. `test_ansi_parity` holds
+# this and `strip_ansi` to the same answer.
+const _ANSI_ESC = r"\e[\]P^_X][^\a\e]*(?:\a|\e\\)?|\e\[[0-9;:?<>=!]*[\x40-\x7e]|\e[\x40-\x5f]"
+_uncolour(line) = occursin('\e', line) ? replace(String(line), _ANSI_ESC => "") : String(line)
+
+function _log_severity(line)
+    t = _uncolour(line)
+    d = _declared_level(t)
+    d === nothing || return d
+    return (occursin(_LOG_BAD, t) || occursin(_LOG_BAD_COUNT, t)) ? :bad :
+           occursin(_LOG_WARN, t) ? :warn : :plain
+end
 
 # The failed units, collapsed. The parameters matter more than the traceback at a glance, so they
 # lead: the question is almost always "which corner of the grid breaks?" rather than "how?".

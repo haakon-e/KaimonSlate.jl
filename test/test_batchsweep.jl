@@ -4,6 +4,7 @@
 # One test at the end does drive real subprocesses through ExecLauncher end to end.
 using ReTest
 import Serialization
+import Logging
 # sweep.jl pulls in batchsweep.jl (and slatetask/memostore/batchlauncher) behind its own guards.
 # It has to be included at file top level: a macro used in a testset is resolved when the testset is
 # parsed, which is before anything inside it has run.
@@ -1546,6 +1547,52 @@ end
         @test Sweep._log_severity("srun: Job step aborted") === :bad
         @test Sweep._log_severity("Warning: assignment to `x` in soft scope") === :warn
         @test Sweep._log_severity("Precompiling MyPkg") === :plain
+    end
+
+    @testset "a record that names its level is believed over its wording" begin
+        # A sweep body writes with `@info`/`@warn`/`@error`, and the task runner gives those a
+        # logger (`_task_logger`) — so the level is STATED rather than inferred. Reading the
+        # sentence instead would call an `@info` mentioning an error an error, which is exactly the
+        # line a reader filters to `error` to get away from.
+        @test Sweep._log_severity("┌ Info 14:22:31.004: 0 errors so far") === :plain
+        @test Sweep._log_severity("┌ Info 14:22:31.004: retrying after a failed read") === :plain
+        @test Sweep._log_severity("┌ Error 14:22:31.004: the solver gave up") === :bad
+        @test Sweep._log_severity("┌ Warning 14:22:31.004: running hot") === :warn
+        @test Sweep._log_severity("[ Info 14:22:31.004: single-line form") === :plain
+        @test Sweep._log_severity("┌ Debug 14:22:31.004: noisy detail") === :plain
+        # Output that declares nothing still goes through the patterns.
+        @test Sweep._log_severity("slurmstepd: error: Exceeded job memory limit") === :bad
+
+        # The runner's own lines travel the same way, and the failure one has to be findable by the
+        # filter rather than only by reading it.
+        mktempdir() do root
+            t = Sweep.LocalTarget(; root, project = tempdir(), chunk = 2,
+                                  payload = joinpath(@__DIR__, "..", "src", "slatetask.jl"))
+            r = Sweep.@sweep(Sweep.paramgrid(x = 1:2), t; submit = false) do p
+                @info "unit running" x = p.x
+                p.x == 2 && error("rigged")
+                p.x
+            end
+            for c in BS.sweep_chunks(root, r.run); SlateTask.run_chunk(root, c); end
+            # Written through the logger, so the shape the viewer parses is the shape produced.
+            out = sprint(io -> Logging.with_logger(SlateTask._task_logger(io)) do
+                @info "chunk finished" chunk = "c1" ran = 2 failed = 0
+            end)
+            lines = split(rstrip(out), '\n')
+            # The logger COLOURS its own box characters, so the escape codes arrive before the `┌`
+            # and a pattern anchored at the start of the line cannot see it. Classified on the
+            # real bytes, not a cleaned-up version of them.
+            @test occursin('\e', lines[1])
+            @test Sweep._log_severity(lines[1]) === :plain
+            plain = Sweep._uncolour.(lines)
+            @test occursin(r"^┌ Info \d\d:\d\d:\d\d\.\d+: chunk finished", plain[1])
+            @test any(l -> startswith(l, "│"), plain)            # keyword values continue the record
+            @test occursin(r"^└ @ ", plain[end])                 # …and it closes with its source
+            bad = sprint(io -> Logging.with_logger(SlateTask._task_logger(io)) do
+                @error "chunk finished with failures" failed = 3
+            end)
+            @test Sweep._log_severity(first(split(bad, '\n'))) === :bad
+        end
     end
 
     @testset "asking for a chart does not narrow what was recorded" begin
