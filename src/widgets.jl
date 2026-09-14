@@ -871,22 +871,28 @@ end
 # the cell that triggered the load, so that cell cannot use the Observable it just asked for —
 # `invokelatest` fixes the construction here and the caller's own `obs[]` fails instead.
 #
-# So: try it once, at include time, and let it be absent. The notebook's manifest is what decides —
-# which costs nothing to a notebook that doesn't have it, and is always satisfied for the readers
-# this feature is FOR, since it exists to drive a Makie figure and Makie brings Observables along.
-const _OBSERVABLES_ERR = Ref{Any}(nothing)
+# So: resolve it once, at include time, and let it be absent. The notebook's manifest is what
+# decides, which costs nothing to a notebook that doesn't have it and is always satisfied for the
+# readers this feature is FOR — it exists to drive a Makie figure, and Makie brings Observables.
+#
+# By UUID rather than `import`, because `import` only sees a project's DIRECT dependencies. A
+# notebook that has Makie has Observables in its manifest without naming it, and that notebook
+# should work; `Base.require` resolves it, `import` would tell them to add a package they already
+# have. The cell that later builds the Observable is unaffected either way, since this runs at
+# worker boot rather than mid-cell.
+const _OBSERVABLES = Ref{Any}(nothing)   # the module — or the error that explains its absence
 try
-    @eval import Observables
+    _OBSERVABLES[] = Base.require(
+        Base.PkgId(Base.UUID("510215fc-4207-5dde-b226-833fc4488ee2"), "Observables"))
 catch e
-    _OBSERVABLES_ERR[] = e          # absent is fine; `bind_observable` is what reports it
+    _OBSERVABLES[] = e                   # absent is fine; `bind_observable` is what reports it
 end
 _observables() =
-    isdefined(@__MODULE__, :Observables) ? getfield(@__MODULE__, :Observables) :
+    _OBSERVABLES[] isa Module ? _OBSERVABLES[]::Module :
     error("bind_observable needs the Observables package, which this notebook's environment " *
           "cannot resolve. Add it to the notebook (the Packages panel, or `Pkg.add(\"Observables\")`) " *
-          "and run the cell again." *
-          (_OBSERVABLES_ERR[] === nothing ? "" :
-           "\n  (loading it reported: " * sprint(showerror, _OBSERVABLES_ERR[]) * ")"))
+          "and run the cell again.\n  (resolving it reported: " *
+          sprint(showerror, _OBSERVABLES[]) * ")")
 
 """
     _do_bind_observable(reg, reglock, listeners, cleanup, name) -> Observable

@@ -66,11 +66,15 @@ _includes(path) = Set(m.captures[1] for m in
     end
     @test isempty(bad) || (println(join(bad, "\n")); false)
 
-    # The instance that got away (#34), pinned as the arrangement rather than the symptom.
+    # The instance that got away (#34), pinned as the arrangement rather than the symptom:
+    # NEITHER module imports Observables. widgets.jl resolves it for itself, by UUID and allowed to
+    # fail, because the worker's LOAD_PATH is the notebook's env plus the slate infra env — Slate's
+    # own environment is not on it, so an import there takes worker startup down when it misses.
     w = joinpath(_SRC, "widgets.jl")
-    @test :Observables in _imported_packages(w)           # the shared file carries its own import…
-    @test !(:Observables in _imported_packages(engine))   # …rather than one module having it…
-    # …and NOT the worker: its LOAD_PATH is the notebook's env plus the slate infra env, so an
-    # import here resolves only by luck and takes worker startup down when it doesn't.
+    @test !(:Observables in _imported_packages(engine))
     @test !(:Observables in _imported_packages(worker))
+    @test !(:Observables in _imported_packages(w))
+    # By UUID rather than name: `import` sees only DIRECT dependencies, and a notebook with Makie
+    # has Observables in its manifest without naming it.
+    @test occursin("510215fc-4207-5dde-b226-833fc4488ee2", read(w, String))
 end
