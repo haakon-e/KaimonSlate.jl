@@ -858,7 +858,7 @@ end
             t = Sweep.LocalTarget(; root, project = tempdir(), chunk = 2,
                                   payload = joinpath(@__DIR__, "..", "src", "slatetask.jl"))
             r = Sweep.@sweep(Sweep.paramgrid(x = 1:4), t) do p; p.x; end   # no `submit =`
-            @test !r.armed && r.state === :ready && r.done == 0
+            @test !r.started && r.state === :ready && r.done == 0
             @test isempty(BS.known_submissions(root))
 
             # Re-running the cell is still free.
@@ -1793,7 +1793,7 @@ end
             @test Sweep.forget_run!(t, other.run) > 0
             @test MemoStore.read_manifest(root, other.run) === nothing
             e = try; Sweep.forget_run!(t, b.run); "" catch x; sprint(showerror, x); end
-            @test occursin("armed", e) && occursin("cancel", e)
+            @test occursin("started", e) && occursin("cancel", e)
         end
     end
 
