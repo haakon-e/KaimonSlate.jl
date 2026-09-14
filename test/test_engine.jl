@@ -277,7 +277,12 @@ mean(data)
         r2 = run_capture(m, src, "cell:doc")                   # the run that used to warn
         @test r1.value_repr == "2" && r2.value_repr == "2"
         @test !occursin("Replacing docs", r2.stderr)
-        @test isempty(strip(r2.stderr))
+        # Not `isempty(stderr)`. A re-run also makes the RUNTIME write "Method definition …
+        # overwritten on the same line" straight to the stream — under CI's flags, and not reliably
+        # on a local run, which is how an over-assertion here passed and then failed there. That one
+        # never goes through the logger, so it is a separate thing to deal with; what this pins is
+        # that the logged docs warning is gone.
+        @test !occursin("Base.Docs", r2.stderr)
 
         # Only that one message: a warning from the cell's own code still comes through, and so
         # does anything else Base has to say.
