@@ -260,4 +260,52 @@ end
         @test ReportEngine.env_parent_fingerprint(plain) == string(hash(take!(io)); base = 16)
     end
 
+    @testset "a sweep re-keys when the code it calls into changes" begin
+        # A batch task process is fresh and has no Revise, so the only thing standing between an
+        # edit and a cluster quietly rerunning the OLD code is this fingerprint. The science usually
+        # lives in a package the parent DEVS IN rather than in the parent's own `src` — and a path
+        # dep is recorded by location, which does not move when its code does.
+        mk(dir, name, uuid, body; sources = "") = begin
+            mkpath(joinpath(dir, "src"))
+            write(joinpath(dir, "Project.toml"),
+                  "name = \"$(name)\"\nuuid = \"$(uuid)\"\n" * sources)
+            write(joinpath(dir, "src", "$(name).jl"), "module $(name)\n$(body)\nend
+")
+        end
+        root = mktempdir()
+        foo, bar, par = joinpath(root, "Foo"), joinpath(root, "Bar"), joinpath(root, "Parent")
+        mk(bar, "Bar", "33333333-3333-3333-3333-333333333333", "deep(x) = x + 1")
+        mk(foo, "Foo", "11111111-1111-1111-1111-111111111111", "crisscross(x) = x * 2";
+           sources = "[deps]\nBar = \"33333333-3333-3333-3333-333333333333\"\n" *
+                     "[sources]\nBar = {path = \"../Bar\"}\n")
+        mk(par, "Parent", "22222222-2222-2222-2222-222222222222", "using Foo";
+           sources = "[deps]\nFoo = \"11111111-1111-1111-1111-111111111111\"\n" *
+                     "[sources]\nFoo = {path = \"../Foo\"}\n")
+
+        dirs = ReportEngine.env_source_dirs(par)
+        @test joinpath(par, "src") in dirs
+        @test joinpath(foo, "src") in dirs          # dev'd in by the parent
+        @test joinpath(bar, "src") in dirs          # …and by Foo, so transitively
+
+        a = ReportEngine.env_source_fingerprint(par)
+        write(joinpath(foo, "src", "Foo.jl"), "module Foo\ncrisscross(x) = x * 999\nend
+")
+        b = ReportEngine.env_source_fingerprint(par)
+        @test a != b                                 # editing a dev dep re-keys
+        write(joinpath(bar, "src", "Bar.jl"), "module Bar\ndeep(x) = x + 42\nend
+")
+        c = ReportEngine.env_source_fingerprint(par)
+        @test b != c                                 # …at any depth
+        write(joinpath(par, "src", "Parent.jl"), "module Parent\nusing Foo\nextra() = 1\nend
+")
+        @test c != ReportEngine.env_source_fingerprint(par)
+
+        # The notebook's own fork is the opposite case and must NOT move on a source edit: it is a
+        # live process with Revise, so folding source in would rebuild the env on every keystroke.
+        d = ReportEngine.env_parent_fingerprint(par)
+        write(joinpath(foo, "src", "Foo.jl"), "module Foo\ncrisscross(x) = x * 7\nend
+")
+        @test ReportEngine.env_parent_fingerprint(par) == d
+    end
+
 end

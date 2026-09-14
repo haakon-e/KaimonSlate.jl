@@ -304,10 +304,48 @@ end
 # running the OLD code. That fails loudly only when a function is newly added; when an existing one
 # changes it fails silently, which is far worse: the results look valid and are cached as if they
 # were computed by the code you are reading.
+#
+# That covers the parent's own `src` AND the `src` of every package dev'd into it by a `[sources]`
+# path — which is where the science usually lives, the parent project being a thin environment
+# around it. A path dep is recorded in the Manifest by LOCATION, and a location does not change when
+# the code at it does, so without this an edit to the package a body calls into is invisible to
+# every fingerprint here: the sweep keeps its key, the finished units are reused, and the results
+# read as though they came from the code on screen.
+"""
+    env_source_dirs(parent) -> Vector{String}
+
+Every source tree whose contents decide what a task computes: `parent/src`, then the same for each
+package `[sources]` devs in, transitively.
+"""
+function env_source_dirs(parent::AbstractString)
+    dirs = String[]
+    seen = Set{String}()
+    function visit(dir)
+        dir in seen && return
+        push!(seen, dir)
+        s = joinpath(dir, "src")
+        isdir(s) && push!(dirs, s)
+        pf = project_file_in(dir)
+        isempty(pf) && return
+        # A workspace member inherits its roots' `[sources]`, so the chain is walked too.
+        for f in vcat([pf], workspace_chain(pf))
+            isfile(f) || continue
+            src = get(_toml(f), "sources", nothing)
+            src isa AbstractDict || continue
+            for (_, e) in _abs_sources(src, dirname(f))
+                e isa AbstractDict && haskey(e, "path") || continue
+                visit(String(e["path"]))
+            end
+        end
+    end
+    isempty(parent) || visit(parent)
+    return dirs
+end
+
 env_source_fingerprint(parent::AbstractString) =
     isempty(parent) ? "" :
     string(hash((env_parent_fingerprint(parent),
-                 src_tree_digest([joinpath(parent, "src")]))); base = 16)
+                 src_tree_digest(env_source_dirs(parent)))); base = 16)
 
 _env_stamp_file(envdir::AbstractString) = joinpath(envdir, ".slate-parent")
 
