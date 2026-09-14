@@ -34,14 +34,27 @@
   let SEV = null;
   function setSev(spec) {
     if (!spec) return;
+    const one = src => { try { return new RegExp(src); } catch (e) { return null; } };
     const build = a => (a || []).map(src => { try { return new RegExp(src, 'i'); } catch (e) { return null; } })
                                 .filter(Boolean);
-    SEV = { error: build(spec.error), warn: build(spec.warn) };
+    SEV = { declared: one(spec.declared), error: build(spec.error), warn: build(spec.warn) };
   }
+  const LVL = { Error: 'error', Warning: 'warn', Info: 'info', Debug: 'info' };
+  // A line that NAMES its level is believed and nothing else is consulted: `@info "0 errors so far"`
+  // contains the word and is not one. Word-sniffing is the fallback for output that declares
+  // nothing — a bare `println`, a C library, the scheduler's own messages.
+  //
+  // Colour codes come off first either way, or an escape sequence sitting between `Error` and its
+  // word boundary stops it being one.
   function sevOf(line) {
     if (!SEV) return 'info';
-    if (SEV.error.some(re => re.test(line))) return 'error';
-    if (SEV.warn.some(re => re.test(line))) return 'warn';
+    const t = line.indexOf('\x1b') < 0 ? line : window.slateAnsiText(line);
+    if (SEV.declared) {
+      const m = SEV.declared.exec(t);
+      if (m) return LVL[m[1]] || 'info';
+    }
+    if (SEV.error.some(re => re.test(t))) return 'error';
+    if (SEV.warn.some(re => re.test(t))) return 'warn';
     return 'info';
   }
 
@@ -53,7 +66,13 @@
     [/(\/[\w./+-]+:\d+)/g, 'logv-p'],                                       // path:line
     [/(\b\d+(?:\.\d+)?\b)/g, 'logv-n'],                                     // numbers
   ];
+  // A line that COLOURED ITSELF is rendered as it asked to be, and nothing else is applied to it:
+  // the tokeniser and the search mark are regexes over markup, and over `<span class="ansi-fg-1">`
+  // they would match inside the attributes they had just written. A coloured hit is still located
+  // and still gets the row highlight; it just does not get the needle underlined inside it.
+  const hasAnsi = s => s.indexOf('\x1b') >= 0;
   function paintLine(text, mark) {
+    if (hasAnsi(text)) return window.slateAnsiHtml(text);
     let h = esc(text);
     for (const [re, cls] of TOK) h = h.replace(re, `<span class="${cls}">$1</span>`);
     // The search term last, so a hit inside a token still shows — and on the ESCAPED text, which
@@ -72,7 +91,7 @@
   const S = {
     key: '', ch: '', files: [], path: '', size: 0,
     pages: [], order: 'new', filter: 'all', paused: false,
-    sort: 'time', needle: '', icase: true, rx: false,
+    sort: { key: 'modified', dir: -1 }, needle: '', icase: true, rx: false,
     hits: null, rawHits: null, hitAt: -1, total: 0, capped: false, counts: null, loading: false, timer: 0, behind: 0,
   };
 
@@ -95,12 +114,7 @@
         </div>
         <div class="logv-body">
           <div class="logv-side">
-            <input class="logv-ffilter" type="search" placeholder="filter files…" spellcheck="false"/>
-            <div class="logv-sorts">
-              <button data-sort="time">time</button>
-              <button data-sort="size">size</button>
-              <button data-sort="name">name</button>
-            </div>
+            <input class="logv-ffilter" type="search" placeholder="filter files or nodes…" spellcheck="false"/>
             <div class="logv-files"></div>
           </div>
           <div class="logv-main">
@@ -119,8 +133,8 @@
               <button class="logv-next" title="next match">▼</button>
             </div>
             <div class="logv-bar2">
-              <button class="logv-order" title="which end is the top">newest first</button>
-              <button class="logv-pause" title="stop following the file">pause</button>
+              <button class="logv-order" title="newest first"></button>
+              <button class="logv-pause" title="stop following the file"></button>
               <span class="logv-meta"></span>
               <button class="logv-jump" style="display:none">new output</button>
             </div>
@@ -145,11 +159,6 @@
 
     q('.logv-sweep').onchange = e => selectSweep(e.target.value);
     q('.logv-ffilter').oninput = paintFiles;
-    q('.logv-sorts').addEventListener('click', e => {
-      const b = e.target.closest('[data-sort]');
-      if (!b) return;
-      S.sort = b.dataset.sort; paintFiles();
-    });
     q('.logv-levels').addEventListener('click', e => {
       const b = e.target.closest('[data-lv]');
       if (!b) return;
@@ -200,10 +209,13 @@
 
   function paintSweeps() {
     const sel = q('.logv-sweep'), all = entries();
+    // Named by the CELL, which is what a reader recognises and can scroll to. A run key is a hash
+    // of what the sweep IS, which makes it stable and unreadable in equal measure.
     sel.innerHTML = all.map(s => {
       const st = s.status || {};
-      const lbl = (st.id || s.key) + (st.state ? ' · ' + st.state : '');
-      return `<option value="${esc(s.key)}"${s.key === S.key ? ' selected' : ''}>${esc(lbl)}</option>`;
+      const lbl = s.cellId || st.id || s.key;
+      return `<option value="${esc(s.key)}"${s.key === S.key ? ' selected' : ''}>${
+        esc(lbl)}${st.state ? esc(' · ' + st.state) : ''}</option>`;
     }).join('');
     sel.style.display = all.length > 1 ? '' : 'none';
   }
@@ -228,32 +240,93 @@
     }).catch(fail);
   }
 
+  // ── The file table ─────────────────────────────────────────────────────────────────────────
+  // The FILENAME is `<job>.<step>.log`, where the job is a hash of the sweep — the same twenty
+  // characters on every row, and nothing a reader can tell apart. What distinguishes one file from
+  // another is which array task wrote it, where it ran, and how it ended, so those are the columns.
+  // The name is still there, in the row's tooltip, for when you need to name one to someone else.
+  //
+  // How a chunk ENDED, from its own status file: no scheduler is asked, so this is as true for a
+  // laptop as for a queue, and a file with no status yet says so rather than claiming success.
+  function fileStatus(f) {
+    if (f.failed > 0) return { txt: f.failed + ' failed', cls: 'error', ord: 3 };
+    if (f.total > 0 && f.done >= f.total) return { txt: 'ok', cls: 'ok', ord: 1 };
+    if (f.done > 0) return { txt: f.done + '/' + f.total, cls: 'run', ord: 2 };
+    return { txt: '—', cls: 'none', ord: 0 };
+  }
+
+  // A sweep is reconciled, so re-running it submits the work that is still missing as a NEW job —
+  // and the array index restarts at 1 in each. Two rows reading `#1` are then two different files,
+  // which is only confusing, so the submission is a column whenever there is more than one of them.
+  const jobs = () => [...new Set(S.files.map(f => f.job))];
+  const jobTag = j => { const i = jobs().indexOf(j); return i < 0 ? '' : 'j' + (i + 1); };
+
+  const COLS = [
+    ['job', 'job', f => jobTag(f.job), 'which submission'],
+    ['step', '#', f => f.step, 'array task within its submission'],
+    ['bytes', 'size', f => f.bytes, 'file size'],
+    ['modified', 'modified', f => f.modified, 'last written'],
+    ['node', 'node', f => f.node || '', 'where it ran'],
+    ['pid', 'pid', f => f.pid || 0, 'the process that ran it'],
+    ['status', 'status', f => fileStatus(f).ord, 'how its chunk ended'],
+  ];
+  // A column earns its place only when it says something. `job` distinguishes nothing until there
+  // are two submissions; `pid` is only knowable for work this machine started, and a scheduler
+  // identifies its own by job id instead.
+  const anyPid = () => S.files.some(f => f.pid > 0);
+  const cols = () => COLS.filter(c => c[0] === 'job' ? jobs().length > 1 :
+                                      c[0] === 'pid' ? anyPid() : true);
+
   function sortedFiles() {
     const t = (q('.logv-ffilter').value || '').toLowerCase();
-    const fs = S.files.filter(f => !t || f.name.toLowerCase().includes(t));
-    const by = { time: (a, b) => b.modified - a.modified || a.name.localeCompare(b.name),
-                 size: (a, b) => b.bytes - a.bytes || a.name.localeCompare(b.name),
-                 name: (a, b) => a.name.localeCompare(b.name) };
-    return fs.slice().sort(by[S.sort] || by.time);
+    const fs = S.files.filter(f => !t ||
+      f.name.toLowerCase().includes(t) || (f.node || '').toLowerCase().includes(t) ||
+      (f.chunk || '').toLowerCase().includes(t) || String(f.pid || '').includes(t));
+    const col = COLS.find(c => c[0] === S.sort.key) || COLS[3];
+    const get = col[2], dir = S.sort.dir;
+    return fs.slice().sort((a, b) => {
+      const x = get(a), y = get(b);
+      const c = (typeof x === 'string') ? x.localeCompare(y) : (x - y);
+      // Job then step breaks every tie, so the order is total and a repaint cannot reshuffle rows
+      // that compare equal on the chosen column.
+      return (c || a.job.localeCompare(b.job) || (a.step - b.step)) * dir;
+    });
   }
 
   function paintFiles() {
     const host = q('.logv-files'), fs = sortedFiles();
-    q('.logv-sorts').querySelectorAll('[data-sort]').forEach(b =>
-      b.classList.toggle('on', b.dataset.sort === S.sort));
-    if (!fs.length) {
+    if (!S.files.length) {
       host.innerHTML = `<div class="logv-none">No job output yet. A scheduler writes it once the
         job starts, and PBS only copies it back when the job ends.</div>`;
       return;
     }
-    host.innerHTML = fs.map(f => `
-      <div class="logv-f${f.path === S.path ? ' on' : ''}" data-p="${esc(f.path)}" title="${esc(f.job)}">
-        <span class="logv-fn">${esc(f.name)}</span>
-        <span class="logv-fb">${bytes(f.bytes)}</span>
-        <span class="logv-fw">${when(f.modified)}</span>
-      </div>`).join('');
-    host.querySelectorAll('[data-p]').forEach(r =>
-      r.onclick = () => selectFile(r.dataset.p));
+    const arrow = k => S.sort.key !== k ? '' : (S.sort.dir < 0 ? ' ▾' : ' ▴');
+    const show = cols();
+    const head = show.map(([k, label, , hint]) =>
+      `<th data-k="${k}" title="${esc(hint)}" class="${S.sort.key === k ? 'on' : ''}">${
+        esc(label)}<span class="logv-arr">${arrow(k)}</span></th>`).join('');
+    const rows = fs.map(f => {
+      const st = fileStatus(f);
+      return `<tr class="${f.path === S.path ? 'on' : ''}" data-p="${esc(f.path)}"
+        title="${esc(f.name)}${f.chunk ? '\n' + esc(f.chunk) : ''}">
+        ${show[0][0] === 'job' ? `<td class="logv-job">${esc(jobTag(f.job))}</td>` : ''}
+        <td class="logv-step">${f.step || '—'}</td>
+        <td class="logv-num">${bytes(f.bytes)}</td>
+        <td class="logv-when">${esc(when(f.modified))}</td>
+        <td class="logv-node">${esc(f.node || '—')}</td>
+        ${anyPid() ? `<td class="logv-pid">${f.pid || '—'}</td>` : ''}
+        <td class="logv-st logv-st-${st.cls}">${esc(st.txt)}</td></tr>`;
+    }).join('');
+    host.innerHTML = `<table class="logv-tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    host.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
+      const k = th.dataset.k;
+      // Same column toggles direction; a new column starts in the order that column is usually
+      // read — newest and largest first, names and nodes A to Z.
+      S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir }
+                                : { key: k, dir: (k === 'node') ? 1 : -1 };
+      paintFiles();
+    });
+    host.querySelectorAll('tr[data-p]').forEach(r => r.onclick = () => selectFile(r.dataset.p));
   }
 
   function selectFile(path) {
@@ -328,7 +401,7 @@
   // ordinary output that the error filter then hides — leaving a filter that shows you the headline
   // of every problem and the detail of none. A continuation line inherits what it continues.
   // (A section split across a page boundary restarts, since the page above may not be loaded.)
-  const CONT = /^(\s|\[\d+\]|@\s|at\s|\.\.\.|Caused by|Stacktrace)/;
+  const CONT = /^(\s|│|└|\[\d+\]|@\s|at\s|\.\.\.|Caused by|Stacktrace)/;
   function cut(text, from) {
     const out = [];
     let off = from, run = 'info';
@@ -374,8 +447,13 @@
       b.classList.toggle('on', lv === S.filter);
       b.textContent = lv + (n == null ? '' : ' ' + n);
     });
-    q('.logv-order').textContent = S.order === 'new' ? 'newest first' : 'oldest first';
-    q('.logv-pause').textContent = S.paused ? 'paused' : 'pause';
+    const ord = q('.logv-order');
+    ord.textContent = S.order === 'new' ? '↓' : '↑';
+    ord.title = S.order === 'new' ? 'newest first — click for oldest first'
+                                  : 'oldest first — click for newest first';
+    const pz = q('.logv-pause');
+    pz.textContent = S.paused ? '▶' : '⏸';
+    pz.title = S.paused ? 'paused — click to follow the file again' : 'stop following the file';
     q('.logv-pause').classList.toggle('on', S.paused);
     q('.logv-icase').classList.toggle('on', S.icase);
     q('.logv-rx').classList.toggle('on', S.rx);
@@ -407,7 +485,9 @@
       const src = lv === 'error' ? SEV.error : SEV.warn;
       if (!src.length) return Promise.resolve(0);
       const pat = src.map(re => '(?:' + re.source + ')').join('|');
-      return call('log_search', path, { pattern: pat, regex: true, ignorecase: true, limit: 1 })
+      // `limit: 0` asks for the count and no hit list, which is one pass over the file and one
+      // integer back. A chip is a number; fetching the matches to arrive at it would move the file.
+      return call('log_search', path, { pattern: pat, regex: true, ignorecase: true, limit: 0 })
         .then(r => r.total).catch(() => 0);
     };
     Promise.all([one('error'), one('warn')]).then(([e, w]) => {
@@ -489,5 +569,5 @@
   // The addressing is the part that has to be right and the part a browser cannot show you is
   // wrong: an off-by-one in a byte offset looks like a highlight on the neighbouring line. Exposed
   // so `test/js/logview_window.mjs` can pin it without a DOM.
-  window.slateLogs = { open, close, _test: { S, cut, visible, sevOf, setSev } };
+  window.slateLogs = { open, close, _test: { S, cut, visible, sevOf, setSev, paintLine } };
 })();

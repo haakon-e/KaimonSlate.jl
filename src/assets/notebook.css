@@ -3202,24 +3202,41 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
 .logv-x:hover { color:var(--text); }
 
 .logv-body { display:flex; flex:1 1 auto; min-height:0; }
-.logv-side { width:270px; flex:0 0 auto; border-right:1px solid var(--border); display:flex; flex-direction:column; min-height:0; }
+.logv-side { width:400px; flex:0 0 auto; border-right:1px solid var(--border); display:flex; flex-direction:column; min-height:0; }
 .logv-ffilter { margin:8px; background:var(--bg); color:var(--text); border:1px solid var(--border);
   border-radius:5px; padding:4px 7px; font-size:.8rem; }
-.logv-sorts { display:flex; gap:4px; padding:0 8px 6px; }
-.logv-sorts button, .logv-levels button, .logv-order, .logv-pause, .logv-icase, .logv-rx,
+.logv-levels button, .logv-order, .logv-pause, .logv-icase, .logv-rx,
 .logv-prev, .logv-next, .logv-jump {
   background:var(--bg); color:var(--dim); border:1px solid var(--border); border-radius:5px;
   padding:2px 7px; font-size:.74rem; cursor:pointer; }
-.logv-sorts button.on, .logv-levels button.on, .logv-pause.on, .logv-icase.on, .logv-rx.on {
+.logv-order, .logv-pause { min-width:26px; text-align:center; font-size:.8rem; line-height:1.1; }
+.logv-levels button.on, .logv-pause.on, .logv-icase.on, .logv-rx.on {
   color:var(--text); border-color:var(--val); background:color-mix(in srgb, var(--val) 14%, transparent); }
 .logv-files { flex:1 1 auto; overflow:auto; min-height:0; }
-.logv-f { display:flex; gap:8px; align-items:baseline; padding:3px 8px; cursor:pointer;
-  font-size:.74rem; font-family:'Cascadia Code',ui-monospace,monospace; }
-.logv-f:hover { background:color-mix(in srgb, var(--dim) 12%, transparent); }
-.logv-f.on { background:color-mix(in srgb, var(--val) 16%, transparent); }
-.logv-fn { color:var(--val); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto; }
-.logv-fb { color:var(--dim); flex:0 0 auto; }
-.logv-fw { color:var(--dim); opacity:.7; flex:0 0 auto; font-size:.68rem; }
+
+/* One table, sorted by clicking a heading and reversed by clicking it again — the same gesture the
+   notebook's data tables answer to, so a column heading means the same thing in both places. */
+.logv-tbl { width:100%; border-collapse:collapse; font-size:.72rem;
+  font-family:'Cascadia Code',ui-monospace,monospace; }
+.logv-tbl th { position:sticky; top:0; z-index:1; background:var(--bg2); text-align:left;
+  font-weight:500; color:var(--dim); padding:4px 6px; cursor:pointer; white-space:nowrap;
+  border-bottom:1px solid var(--border); user-select:none; }
+.logv-tbl th:hover { color:var(--text); }
+.logv-tbl th.on { color:var(--text); }
+.logv-arr { opacity:.8; }
+.logv-tbl td { padding:2px 6px; white-space:nowrap; border-bottom:1px solid
+  color-mix(in srgb, var(--border) 35%, transparent); }
+.logv-tbl tbody tr { cursor:pointer; }
+.logv-tbl tbody tr:hover { background:color-mix(in srgb, var(--dim) 12%, transparent); }
+.logv-tbl tbody tr.on { background:color-mix(in srgb, var(--val) 16%, transparent); }
+.logv-step { color:var(--val); text-align:right; }
+.logv-num  { text-align:right; color:var(--text); opacity:.8; }
+.logv-when { color:var(--dim); }
+.logv-node { color:var(--dim); max-width:130px; overflow:hidden; text-overflow:ellipsis; }
+.logv-st-ok   { color:var(--val); }
+.logv-st-run  { color:var(--amber,#d9a441); }
+.logv-st-error{ color:var(--red,#e57575); }
+.logv-st-none { color:var(--dim); opacity:.6; }
 .logv-none { padding:10px; font-size:.78rem; color:var(--dim); line-height:1.5; }
 
 .logv-main { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -3239,6 +3256,9 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
   font-size:.72rem; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
 .logv-l { display:block; }
 .logv-info { color:var(--text); opacity:.72; }
+/* A line carrying its own SGR colour is rendered by ansi.js into .ansi-* spans, which
+   already carry a colour — the level's own colour must not win over it. */
+.logv-pre [class^='ansi-'], .logv-pre [class*=' ansi-'] { opacity:1; }
 .logv-warn { color:var(--amber,#d9a441); }
 .logv-error { color:var(--red,#e57575); }
 .logv-l.hit { background:color-mix(in srgb, var(--val) 22%, transparent); border-radius:3px; }
@@ -3247,3 +3267,6 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
 .logv-t { color:var(--dim); }
 .logv-p { color:var(--val); }
 .logv-n { color:color-mix(in srgb, var(--val) 70%, var(--text)); }
+
+.logv-job { color:var(--dim); }
+.logv-pid { color:var(--dim); text-align:right; }

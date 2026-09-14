@@ -1403,9 +1403,33 @@ end
             few = Sweep.log_search(r, path, "ERROR"; limit = 3)
             @test few.total == 12 && length(few.hits) == 3 && few.capped
 
+            # …and it bounds it at the SOURCE. A term on most lines of the file yields one JSON
+            # object per match, several times the size of the file itself, so a limit applied after
+            # the bytes have crossed is not a limit. The count stays exact either way: it is one
+            # integer however many times the pattern occurs.
+            many = Sweep.log_search(r, path, "INFO"; limit = 5)
+            @test many.total == 59_880 && length(many.hits) == 5 && many.capped
+            @test Sweep.log_search(r, path, "INFO"; limit = 0).total == 59_880
+            @test isempty(Sweep.log_search(r, path, "INFO"; limit = 0).hits)
+
             # Case folding is the search's, not the caller's.
             @test Sweep.log_search(r, path, "error"; ignorecase = true).total == 12
             @test Sweep.log_search(r, path, "error").total == 0
+
+            # The severity patterns are counted over whole files by ripgrep, and its engine has no
+            # look-around — one written with it matches in Julia and silently never matches here,
+            # so the card would colour a line the viewer's count did not know about.
+            @test Sweep.log_search(r, path, Sweep._LOG_BAD_SRC;
+                                   regex = true, ignorecase = true, limit = 1).total == 12
+            let p2 = joinpath(root, "logs", "$(name).9.log")
+                write(p2, "chunk a: 4 ran, 0 skipped, 0 failed of 4\n" *
+                          "chunk b: 1 ran, 0 skipped, 3 failed of 4\n")
+                hit = Sweep.log_search(r, p2, Sweep._LOG_BAD_COUNT_SRC;
+                                       regex = true, ignorecase = true, limit = 9)
+                @test hit.total == 1 && occursin("3 failed", hit.hits[1].text)
+                @test Sweep._log_severity("chunk b: 1 ran, 0 skipped, 3 failed of 4") === :bad
+                @test Sweep._log_severity("chunk a: 4 ran, 0 skipped, 0 failed of 4") === :plain
+            end
 
             # And a path the listing never named is refused, because it would reach a shell.
             @test_throws ErrorException Sweep.log_slice(r, "/etc/passwd")
@@ -1424,6 +1448,27 @@ end
             @test f["bytes"] == sz && f["name"] == basename(path) && !isempty(f["job"])
 
             @test act("log_stat")["bytes"] == sz
+
+            # The PROCESS that ran each array task, for work this machine started. This fixture
+            # writes its logs by hand and never submitted, so there is no pid file — and the
+            # listing says so rather than inventing one.
+            @test f["pid"] == 0
+            # `submit!` records one pid per array task, in task order — the same order that names
+            # the chunks — so the listing joins them by the index already in the file's name. That
+            # join is what makes a running local job reachable from `ps` or `kill`.
+            let l = Sweep.launcher_for(t), jr = Sweep.job_root(t), nm = f["job"]
+                # Beyond PID_MAX, so `poll` can never read this fixture as a LIVE job and leave a
+                # sweep looking like it has work in flight that will never end.
+                write(Sweep.BatchLauncher._jobfile(jr, nm), "999991\n999992\n")
+                @test Sweep.BatchLauncher.job_pids(l, jr, nm) == [999991, 999992]
+                again = Sweep.handle_action(t, r.run, r.params, r.keys, "logs")["loglist"]
+                g = again[findfirst(x -> x["path"] == path, again)]
+                @test g["step"] == 1 && g["pid"] == 999991
+                rm(Sweep.BatchLauncher._jobfile(jr, nm); force = true)
+            end
+            # A scheduler's work is identified by its own job id, and this machine cannot signal it.
+            @test isempty(Sweep.BatchLauncher.job_pids(
+                Sweep.BatchLauncher.SlurmLauncher("login"), root, f["job"]))
             # Numbers survive arriving as strings: a browser is free to send either.
             sl = act("log_slice"; offset = "-4096", nbytes = "4096")
             @test sl["size"] == sz && sl["to"] == sz - 1 && !isempty(sl["text"])

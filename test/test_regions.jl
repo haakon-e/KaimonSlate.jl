@@ -549,10 +549,20 @@ const RE = KaimonSlate.ReportEngine
         # at boot — and the rest of this suite cannot see it, because tests run in KaimonSlate's own
         # project, where that package resolves perfectly well. So check it by reading the source.
         src = dirname(pathof(KaimonSlate))
-        # Stdlibs, plus the two packages the boot script provisions into the worker's own
-        # `worker_infra` env — those are Slate's to guarantee, unlike a dependency of the hub.
-        allowed = Set(readdir(Sys.STDLIB)) ∪ Set(["Base", "Core", "Main",
-                                                  "KaimonGate", "SlateExtensionsBase"])
+        # Stdlibs, plus the packages the boot script provisions into the worker's own
+        # `worker_infra` env — those are Slate's to guarantee, unlike a dependency of the hub. A
+        # name may only be added here once BOTH paths provision it: `src/worker_infra/Project.toml`
+        # for a local worker and `_env_instantiate_script` for a remote one. Provisioned in only one
+        # of them is the failure this guard exists to catch, and it shows up as every worker on the
+        # other path dying at boot.
+        allowed = Set(readdir(Sys.STDLIB)) ∪ Set(["Base", "Core", "Main", "KaimonGate",
+                                                  "SlateExtensionsBase", "ripgrep_jll"])
+        # KaimonGate is not among them: it rides its own scratchspace, inserted ahead of the
+        # notebook project rather than into this env.
+        for pkg in ("SlateExtensionsBase", "ripgrep_jll")
+            @test occursin(pkg, read(joinpath(src, "worker_infra", "Project.toml"), String))
+            @test occursin(pkg, read(joinpath(src, "remote.jl"), String))
+        end
         # PARSE rather than grep: `using CairoMakie` in a docstring and `using MyPkg` in a `@sweep`
         # example are not imports, and an import inside a `try` is guarded on purpose.
         function toplevel_imports(ex, out = String[])

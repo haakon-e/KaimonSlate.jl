@@ -14,9 +14,12 @@
 module BatchLauncher
 
 import Dates
+# Reachable by name in both contexts that load this file: a direct dependency of the hub, and on the
+# worker's infra environment. Imported here so that searching never loads a package.
+import ripgrep_jll
 
 export Launcher, ExecLauncher, SlurmLauncher, PbsLauncher, JobSpec, submit!, poll, cancel!, logs,
-       log_files, log_tail, log_stat, log_slice, log_search
+       log_files, log_tail, log_stat, log_slice, log_search, job_pids
 
 """
     JobSpec
@@ -206,20 +209,7 @@ end
 # well as the hub — the artifact is on both paths, but named by neither. Falls back to an `rg` on
 # PATH, which is what a remote login node offers. `nothing` when there is none, and the caller says
 # so rather than pretending the file had no matches.
-const _RG_UUID = "e10fc14b-37cd-5cbc-b289-ad01b12ebaad"
-const _RG = Ref{Any}(missing)         # missing = not looked for yet; nothing = looked, not found
-function _rg()
-    _RG[] === missing || return _RG[]
-    p = try
-        m = Base.require(Base.PkgId(Base.UUID(_RG_UUID), "ripgrep_jll"))
-        collect(String, Base.invokelatest(getfield(m, :rg)).exec)
-    catch
-        w = Sys.which("rg")
-        w === nothing ? nothing : String[w]
-    end
-    _RG[] = p
-    return p
-end
+_rg() = ripgrep_jll.rg().exec
 
 """
     log_stat(launcher, path) -> (; bytes, modified)
@@ -344,6 +334,25 @@ function submit!(l::ExecLauncher, spec::JobSpec)
     return join(pids, ",")
 end
 
+"""
+    job_pids(launcher, root, name) -> Vector{Int}
+
+The process ids a submission started, in array-task order — so `pids[i]` is the process that wrote
+`<name>.<i>.log`. Empty for a launcher whose work runs somewhere this machine cannot signal: a
+scheduler's own job id is what identifies those, and `poll` already reports it.
+
+A pid is reported as the historical fact that it is. Whether it is still ALIVE is deliberately not,
+because the answer stops being trustworthy the moment the process exits and the OS hands the number
+to something else — the chunk's own status says whether it is still going.
+"""
+job_pids(::Launcher, ::AbstractString, ::AbstractString) = Int[]
+
+function job_pids(::ExecLauncher, root::AbstractString, name::AbstractString)
+    f = _jobfile(String(root), String(name))
+    isfile(f) || return Int[]
+    return [something(tryparse(Int, s), 0) for s in split(read(f, String); keepempty = false)]
+end
+
 function poll(l::ExecLauncher, root::AbstractString, names)
     out = Dict{String,Symbol}()
     for name in names
@@ -448,28 +457,31 @@ function log_search(::ExecLauncher, path::AbstractString, pattern::AbstractStrin
     return _rg_search(rg, path, pattern, ignorecase, regex, limit)
 end
 
+# Two passes, because the two answers have very different costs. The count is one integer however
+# many times the pattern occurs; the hit list is a JSON object per match, which for a term appearing
+# on most lines runs to several times the size of the file. `-m` bounds what ripgrep EMITS, so the
+# limit is enforced at the source rather than by discarding what has already crossed a pipe.
 function _rg_search(rg, path, pattern, ignorecase, regex, limit)
     flags = String[]
     ignorecase && push!(flags, "-i")
     regex || push!(flags, "-F")
-    hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[]
-    total = 0
-    out = try
-        read(Cmd(String[rg..., flags..., "--json", "--", String(pattern), String(path)]), String)
+    run_rg(extra) = try
+        read(Cmd(String[rg..., flags..., extra..., "--", String(pattern), String(path)]), String)
     catch
         ""                                   # rg exits 1 on "no matches", which is not an error
     end
-    for ln in eachsplit(out, '\n'; keepempty = false)
-        # Deliberately not a JSON parse: these lines are machine-written, one per event, and the
-        # three fields wanted are flat. Pulling them out directly keeps this free of a JSON
-        # dependency in a file that is included into the worker.
-        occursin("\"type\":\"match\"", ln) || continue
-        total += 1
-        length(hits) < limit || continue
-        off = _json_int(ln, "absolute_offset")
-        no  = _json_int(ln, "line_number")
-        txt = _json_text(ln)
-        push!(hits, (; offset = off, line = no, text = txt))
+    total = something(tryparse(Int, strip(run_rg(["-c"]))), 0)
+    hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[]
+    n = max(0, Int(limit))
+    if n > 0 && total > 0
+        for ln in eachsplit(run_rg(["--json", "-m", string(n)]), '\n'; keepempty = false)
+            # Deliberately not a JSON parse: these lines are machine-written, one per event, and the
+            # three fields wanted are flat. Pulling them out directly keeps this free of a JSON
+            # dependency in a file that is included into the worker.
+            occursin("\"type\":\"match\"", ln) || continue
+            push!(hits, (; offset = _json_int(ln, "absolute_offset"),
+                           line = _json_int(ln, "line_number"), text = _json_text(ln)))
+        end
     end
     return (; total, hits, capped = total > length(hits))
 end

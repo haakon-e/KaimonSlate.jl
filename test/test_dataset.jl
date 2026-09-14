@@ -1012,4 +1012,23 @@ const MS = RE.MemoStore
             @test st == "error" && occursin("data=auto", String(err))
         end
     end
+
+    @testset "one answer for stripping a log line's colour" begin
+        # `sweep.jl` is included into a BARE module by the worker, so it carries its own copy of the
+        # escape pattern rather than reaching into a parent that may not have termcook.jl. Two
+        # copies is the cost; disagreeing is not, and this is the only place both are loaded.
+        for s in ("plain text",
+                  "\e[31m\e[1m┌ \e[22m\e[39m\e[31m\e[1mError 14:22:31.004: \e[22m\e[39mit died",
+                  "\e[36m┌ \e[39m\e[36mInfo 12:00:00.000: \e[39mfine",
+                  "\e]0;a title\a after",
+                  "a\e[2Jb\e[Kc",
+                  "no escapes at all 123")
+            @test RE.Sweep._uncolour(s) == RE.strip_ansi(s)
+        end
+        # …and the point of it: a level is unreadable until the colour is off.
+        red = "\e[31m\e[1m┌ \e[22m\e[39m\e[31m\e[1mError 14:22:31.004: \e[22m\e[39mit died"
+        @test RE.Sweep._log_severity(red) === :bad
+        @test RE.Sweep._declared_level(red) === nothing          # not before stripping
+        @test RE.Sweep._declared_level(RE.Sweep._uncolour(red)) === :bad
+    end
 end

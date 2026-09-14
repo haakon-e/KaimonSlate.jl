@@ -2746,13 +2746,49 @@ element of each submission. Listing is separate from reading, so the interesting
 always the most recent — can be opened without dragging every other one across with it.
 """
 log_files(r::ShardedResult) = log_files(getfield(r, :target), getfield(r, :run))
+# A log's name carries the scheduler's array index — `<job>.<step>.log` — which is also the
+# position of its chunk in the job's index. That is the only link between a FILE and the work that
+# wrote it, and it is what lets the listing say where a file ran and how it ended rather than
+# offering a column of identical names.
+# SLURM names a file `<job>.<jobid>_<index>.out`, PBS and the local launcher `<job>.<index>.<ext>`.
+# The array INDEX is what maps to a chunk, so the job id in front of it is optional here.
+function _log_step(path::AbstractString)
+    m = match(r"\.(?:\d+_)?(\d+)\.(?:log|out|err)$", basename(String(path)))
+    return m === nothing ? 0 : parse(Int, m.captures[1])
+end
+
+# What the chunk's own status file says. Written per chunk by the task runner and synced back with
+# everything else, so this costs one read and needs nothing from the scheduler.
+function _chunk_facts(root::AbstractString, chunk::AbstractString)
+    blank = (; node = "", ran = 0, failed = 0, done = 0, total = 0)
+    isempty(chunk) && return blank
+    f = joinpath(SlateTask.status_dir(root), chunk * ".toml")
+    isfile(f) || return blank
+    d = try; TOML.parsefile(f); catch; return blank; end
+    return (; node = String(get(d, "ran_on", "")), ran = Int(get(d, "ran", 0)),
+              failed = Int(get(d, "failed", 0)), done = Int(get(d, "done", 0)),
+              total = Int(get(d, "total", 0)))
+end
+
 function log_files(t::SweepTarget, run::AbstractString)
     l = launcher_for(t)
     root = job_root(t)
+    store = store_root(t)
+    subs = BatchSweep.known_submissions(store)
     out = NamedTuple[]
     for nm in run_jobs(t, run)
+        chunks = get(subs, nm, String[])
+        # Written in array-task order by the launcher that started them, so the same index that
+        # names a chunk names the process that ran it.
+        pids = try; BatchLauncher.job_pids(l, root, nm); catch; Int[]; end
         for e in (try; BatchLauncher.log_files(l, root, nm); catch; []; end)
-            push!(out, (; job = nm, e.path, e.bytes, e.modified))
+            step = _log_step(e.path)
+            at(v) = (1 <= step <= length(v)) ? v[step] : nothing
+            chunk = something(at(chunks), "")
+            f = _chunk_facts(store, chunk)
+            push!(out, (; job = nm, e.path, e.bytes, e.modified, step, chunk,
+                          pid = something(at(pids), 0),
+                          f.node, f.ran, f.failed, f.done, f.total))
         end
     end
     sort!(out; by = e -> (-e.modified, e.path))
@@ -2925,7 +2961,11 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
                                                "name" => basename(String(f.path)),
                                                "job" => String(f.job),
                                                "bytes" => Int(f.bytes),
-                                               "modified" => Int(f.modified))
+                                               "modified" => Int(f.modified),
+                                               "step" => f.step, "chunk" => f.chunk, "pid" => f.pid,
+                                               "node" => f.node, "ran" => f.ran,
+                                               "failed" => f.failed, "done" => f.done,
+                                               "total" => f.total)
                               for f in log_files(target, run)]
         catch e
             out["loglist"] = Dict{String,Any}[]
