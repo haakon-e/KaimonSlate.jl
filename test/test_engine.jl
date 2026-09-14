@@ -247,7 +247,7 @@ mean(data)
 
     @testset "progress-logging bridge → cell meter" begin
         rec = NamedTuple[]   # (id, frac, msg, done)
-        lg = ReportEngine._ProgressLogger(Logging.NullLogger(),
+        lg = ReportEngine._CellLogger(Logging.NullLogger(),
                                           (i, f, m, d) -> push!(rec, (id = i, frac = f, msg = m, done = d)))
         Logging.with_logger(lg) do
             Logging.@logmsg Logging.LogLevel(-1) "train" progress = 0.5 _id = :bar1
@@ -264,6 +264,28 @@ mean(data)
         @test ReportEngine._progress_frac(nothing) == 0.0
         @test ReportEngine._progress_frac(2.0) == 1.0          # clamped
         @test ReportEngine._progress_sink(Module(:Bare))("", 0.5, "x", false) === nothing   # no slate_progress → no-op
+    end
+
+    @testset "a re-run does not warn about replacing its own docs" begin
+        # Defining a documented function and running the cell again makes `@doc` warn that it is
+        # replacing the docstring. Re-running is the normal operation in a reactive notebook, so
+        # that fires on the ordinary case and the reader can do nothing about it.
+        m = Module(:DocRerun)
+        Core.eval(m, :(using Base: @doc))
+        src = "\"\"\"what it does\"\"\"\nf(x::Int) = x + 1\nf(1)"
+        r1 = run_capture(m, src, "cell:doc")
+        r2 = run_capture(m, src, "cell:doc")                   # the run that used to warn
+        @test r1.value_repr == "2" && r2.value_repr == "2"
+        @test !occursin("Replacing docs", r2.stderr)
+        @test isempty(strip(r2.stderr))
+
+        # Only that one message: a warning from the cell's own code still comes through, and so
+        # does anything else Base has to say.
+        r3 = run_capture(m, "@warn \"mine\"\n1", "cell:warn")
+        @test occursin("mine", r3.stderr)
+        @test ReportEngine._rerun_noise(Base.Docs, "Replacing docs for `Main.f :: Tuple{Int64}`")
+        @test !ReportEngine._rerun_noise(Base.Docs, "something else entirely")
+        @test !ReportEngine._rerun_noise(Main, "Replacing docs for `x`")
     end
 
 end

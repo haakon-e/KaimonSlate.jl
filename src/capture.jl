@@ -375,28 +375,46 @@ function _is_quiet_cell(source::AbstractString)
     return false
 end
 
-# ── Progress protocol bridge ─────────────────────────────────────────────────
-# Julia's de-facto progress standard (ProgressLogging.jl, consumed by Pluto / VS Code /
-# Juno / TerminalLoggers) is a LOG RECORD carrying a `progress` value (a Float 0..1,
-# `nothing`, or "done") at `LogLevel(-1)`, identified by its log `id`. We wrap the cell's
-# eval logger to intercept those records and funnel them into the SAME sink as a manual
-# `slate_progress(frac; msg)` call — so a plain `@progress for …` loop, or any library that
-# speaks the protocol, drives the cell meter with ZERO extra work. Everything else passes
-# through to the parent (console) logger untouched. No dep on ProgressLogging: we match the
-# `:progress` kwarg, which IS the wire protocol.
-struct _ProgressLogger <: Logging.AbstractLogger
+# ── The cell's logger ────────────────────────────────────────────────────────
+# Wraps the ConsoleLogger a cell's `@info`/`@warn` print through, to do two things the console
+# can't. Everything it doesn't claim passes to the parent untouched.
+#
+# 1. PROGRESS. Julia's de-facto progress standard (ProgressLogging.jl, consumed by Pluto / VS Code /
+#    Juno / TerminalLoggers) is a LOG RECORD carrying a `progress` value (a Float 0..1, `nothing`,
+#    or "done") at `LogLevel(-1)`, identified by its log `id`. Those records are funnelled into the
+#    SAME sink as a manual `slate_progress(frac; msg)` call — so a plain `@progress for …` loop, or
+#    any library that speaks the protocol, drives the cell meter with ZERO extra work. No dep on
+#    ProgressLogging: we match the `:progress` kwarg, which IS the wire protocol.
+#
+# 2. RE-RUN NOISE. A warning that only fires because a cell ran twice is not telling the reader
+#    anything — re-running is the normal operation here, not a mistake. See `_rerun_noise`.
+struct _CellLogger <: Logging.AbstractLogger
     parent::Logging.AbstractLogger
     sink                       # (id, frac::Float64, msg::String, done::Bool) -> Any  (cell progress channel)
 end
-Logging.shouldlog(::_ProgressLogger, _...) = true                          # filter in handle_message
-Logging.min_enabled_level(l::_ProgressLogger) = min(Logging.LogLevel(-1), Logging.min_enabled_level(l.parent))
-Logging.catch_exceptions(l::_ProgressLogger) = Logging.catch_exceptions(l.parent)
+Logging.shouldlog(::_CellLogger, _...) = true                          # filter in handle_message
+Logging.min_enabled_level(l::_CellLogger) = min(Logging.LogLevel(-1), Logging.min_enabled_level(l.parent))
+Logging.catch_exceptions(l::_CellLogger) = Logging.catch_exceptions(l.parent)
 
 _progress_frac(p) = p === nothing                  ? 0.0 :
                     p isa AbstractString           ? (p == "done" ? 1.0 : 0.0) :
                     p isa Real                     ? (isnan(p) ? 0.0 : clamp(Float64(p), 0.0, 1.0)) : 0.0
 
-function Logging.handle_message(l::_ProgressLogger, level, message, _module, group, id, file, line; kwargs...)
+# Warnings that a notebook provokes by construction, not by anything the reader did wrong.
+#
+# `@doc` warns when a docstring lands on a signature that already has one. A cell that defines a
+# documented function does exactly that on every re-run, so the warning fires on the ordinary case
+# and there is no version of the cell that avoids it. The one thing it could genuinely flag — the
+# SAME function documented in two different cells — the cell header already reports, as the
+# `dupdefs` badge, where the reader can see both cells rather than a message about neither.
+#
+# Matched on the message rather than the log `id`, which is a hash of the source position and so
+# changes between Julia versions. If Base rewords it the warning comes back, which is the right way
+# for this to fail: noise returns, nothing gets hidden that shouldn't be.
+_rerun_noise(_module, message) =
+    _module === Base.Docs && startswith(string(message), "Replacing docs for")
+
+function Logging.handle_message(l::_CellLogger, level, message, _module, group, id, file, line; kwargs...)
     if haskey(kwargs, :progress)                                            # a progress record → cell meter
         p = kwargs[:progress]
         # The log `id` keys the bar — each `@withprogress` scope (nested loops, parallel tasks) has
@@ -406,6 +424,7 @@ function Logging.handle_message(l::_ProgressLogger, level, message, _module, gro
         try; l.sink(bid, _progress_frac(p), message === nothing ? "" : string(message), p === "done"); catch; end
         return nothing                                                      # consume (don't echo to stderr)
     end
+    _rerun_noise(_module, message) && return nothing
     Logging.shouldlog(l.parent, level, _module, group, id) &&
         Logging.handle_message(l.parent, level, message, _module, group, id, file, line; kwargs...)
     return nothing
@@ -850,7 +869,7 @@ function run_capture(mod::Module, source::AbstractString, filename::AbstractStri
         # ConsoleLogger on the captured stderr (`_logio`), so @warn/@info/@error land in this cell's
         # stream — coloured, since the stream reports `:color => true` and the renderer turns SGR into
         # spans. Wrapped so ProgressLogging `@progress` records drive the cell meter instead of printing.
-        _logger = _ProgressLogger(Logging.ConsoleLogger(_logio(capture)), _progress_sink(mod))
+        _logger = _CellLogger(Logging.ConsoleLogger(_logio(capture)), _progress_sink(mod))
         Logging.with_logger(_logger) do
             value = _eval_cell_source(mod, source, filename)
         end
