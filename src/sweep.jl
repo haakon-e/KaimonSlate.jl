@@ -313,7 +313,7 @@ the store, provisioning, the environment key, how a sweep is planned — is iden
 only `launcher_for` differs. A second struct would have duplicated twenty methods to change one.
 """
 struct ClusterTarget <: SweepTarget
-    kind::Symbol        # :slurm | :pbs — which scheduler's client tools `host` has
+    kind::Symbol        # :slurm | :pbs | :exec — what schedules the work on `host`
     host::String
     root::String
     root_remote::String
@@ -329,20 +329,25 @@ struct ClusterTarget <: SweepTarget
     directives::String
     parent::String      # what the task environment is built from; `project` overrides it
     julia::String       # the julia to build that environment with, as the login node names it
+    procs::Int          # `exec` only: processes at once on `host`; 0 = follow `local_procs()`
 end
 #
 # A target DESCRIBES a cluster; it does not reach one. `parent` and an empty `project`/`payload` mean
 # "build the environment and ship the runner when there is a job to submit" — see `provision!`. Pass
 # `project` to point at an environment the site already manages, in which case nothing is shipped.
+# An `exec` cluster runs processes on its host with no scheduler, so it caps concurrency the same
+# way a local one does.
+local_procs(t::ClusterTarget) = t.procs > 0 ? t.procs : local_procs()
+
 function ClusterTarget(host = ""; kind = :slurm, root = "", root_remote = root, payload = "",
                        parent = "", project = nothing,
                        resources = (; cpus = 1, mem = "2G", walltime = "01:00:00", partition = ""),
                        chunk = 16, account = "", qos = "", prologue = "", directives = "",
-                       julia = "julia")
+                       julia = "julia", procs = 0)
     ClusterTarget(Symbol(kind), String(host), String(root), String(root_remote),
                   project === nothing ? "" : String(project), String(payload),
                   resources, Int(chunk), String(account), String(qos), String(prologue),
-                  String(directives), String(parent), String(julia))
+                  String(directives), String(parent), String(julia), Int(procs))
 end
 
 "A `ClusterTarget` on SLURM. The spelling notebooks and the docs use."
@@ -369,7 +374,7 @@ function provision!(t::ClusterTarget)
     # shipped rather than configured. Naming one is still allowed, for a site that stages it itself.
     pay = isempty(t.payload) ? provision_payload!(t.host, t.root_remote) : t.payload
     return ClusterTarget(t.kind, t.host, t.root, t.root_remote, proj, pay, t.resources, t.chunk,
-                         t.account, t.qos, t.prologue, t.directives, t.parent, t.julia)
+                         t.account, t.qos, t.prologue, t.directives, t.parent, t.julia, t.procs)
 end
 
 # Resources belong to the TARGET (a site's account, its partitions) but walltime, memory and cores
@@ -380,7 +385,7 @@ with_resources(t::ClusterTarget, res) =
     res === nothing ? t :
     ClusterTarget(t.kind, t.host, t.root, t.root_remote, t.project, t.payload,
                   merge(t.resources, res), t.chunk, t.account, t.qos, t.prologue, t.directives,
-                  t.parent, t.julia)
+                  t.parent, t.julia, t.procs)
 
 # The scheduler settings a `#%% sweep` cell may carry on its header (engine.jl `cell_attrs`), e.g.
 #
@@ -485,9 +490,12 @@ sweep cell names one with `cluster=`; call it directly only to inspect what a de
 """
 function cluster(spec::AbstractDict)
     a = cluster_args(spec)
-    a.kind == "local" && return LocalTarget(; a.root, a.parent, a.chunk, a.procs)
+    # No scheduler AND no host is this machine, which has a target of its own — it needs no ssh
+    # session and prepares its environment directly.
+    (a.kind == "exec" && isempty(a.host)) &&
+        return LocalTarget(; a.root, a.parent, a.chunk, a.procs)
     return ClusterTarget(a.host; kind = Symbol(a.kind), a.root, a.root_remote, a.parent, a.payload,
-                         a.chunk, a.account, a.qos, a.prologue, a.directives, a.resources)
+                         a.chunk, a.account, a.qos, a.prologue, a.directives, a.resources, a.procs)
 end
 
 """
@@ -500,18 +508,24 @@ function cluster_args(spec::AbstractDict)
     get_(k, d = "") = String(get(spec, k, d))
     kind = lowercase(get_("kind", "slurm"))
     name = get_("name", "cluster")
-    kind in ("slurm", "pbs", "local") ||
-        error("cluster `$name` has kind `$kind`; this build supports `slurm`, `pbs` and `local`. " *
+    # `kind` names what SCHEDULES the work; `host` says where. `local` is the older spelling of
+    # `exec` with no host, kept because a definition on disk uses it.
+    kind == "local" && (kind = "exec")
+    kind in ("slurm", "pbs", "exec") ||
+        error("cluster `$name` has kind `$kind`; this build supports `slurm`, `pbs` and `exec` " *
+              "(no scheduler — Slate runs the processes itself, here or on a host). " *
               "Kubernetes is a separate backend, not an option here.")
     root = get_("root")
     host = get_("host")
-    # Local only: how many task processes at once. 0 = follow the session setting.
+    # `exec` only: how many task processes at once, wherever it runs. 0 = follow the setting.
     procs = something(tryparse(Int, get_("procs", "0")), 0)
     root_remote = get_("root_remote")
     # A cluster reached over ssh has ONE store, and it is the cluster's — `root` is for a local run,
     # or for the unusual case of a store this notebook has mounted. Requiring both was a hangover
     # from assuming a shared filesystem.
-    if kind == "local" || isempty(host)
+    # No host means everything is on THIS machine — including a scheduler whose client tools are
+    # here, which is the case when Slate runs on the login node itself. The store is then local.
+    if isempty(host)
         isempty(root) && isempty(root_remote) &&
             error("cluster `$name` has no `root` — where its store lives on this machine")
         isempty(root) && (root = root_remote)
@@ -650,7 +664,8 @@ with_chunk(t::LocalTarget, n) = n === nothing ? t :
     LocalTarget(t.root, t.project, t.payload, n, t.procs)
 with_chunk(t::ClusterTarget, n) = n === nothing ? t :
     ClusterTarget(t.kind, t.host, t.root, t.root_remote, t.project, t.payload,
-                  t.resources, n, t.account, t.qos, t.prologue, t.directives, t.parent, t.julia)
+                  t.resources, n, t.account, t.qos, t.prologue, t.directives, t.parent, t.julia,
+                  t.procs)
 
 "The host a target authenticates to; empty for one that runs here."
 target_host(::LocalTarget) = ""
@@ -673,6 +688,12 @@ launcher_for(t::LocalTarget) = BatchLauncher.ExecLauncher(; maxproc = local_proc
 # runner rather than building its own ssh command. This is the ONE place a target's scheduler is
 # consulted, which is what makes a third one a new `Launcher` and nothing else.
 function launcher_for(t::ClusterTarget)
+    # `exec` is not a scheduler — it is the absence of one, on a machine that is not this one. The
+    # processes are Slate's to start, watch and kill, so the concurrency cap applies there exactly
+    # as it does here; nothing else about the target changes.
+    t.kind === :exec &&
+        return BatchLauncher.ExecLauncher(t.host; maxproc = local_procs(t),
+                                          runner = (h, sc) -> run_there(h, sc))
     ctor = t.kind === :slurm ? BatchLauncher.SlurmLauncher :
            t.kind === :pbs   ? BatchLauncher.PbsLauncher :
            error("cluster: no launcher for scheduler `$(t.kind)`")

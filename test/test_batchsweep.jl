@@ -2506,6 +2506,31 @@ end
             @test Sweep.launcher_for(Sweep.SlurmTarget("login"; root_remote = "/s")) isa
                   Sweep.BatchLauncher.SlurmLauncher
             @test Sweep.PbsTarget("login"; root_remote = "/s").kind === :pbs
+
+            # `kind` names what SCHEDULES the work and `host` says WHERE. A machine with no
+            # queueing system on it is the combination the old vocabulary could not express, since
+            # `local` meant "here AND no scheduler" — so a lab box or a cloud VM had no spelling.
+            ex = Sweep.cluster(Dict("name" => "box", "kind" => "exec", "host" => "lab1",
+                                    "root_remote" => "/scratch/box", "project" => tempdir(),
+                                    "procs" => "6"))
+            @test ex isa Sweep.ClusterTarget && ex.kind === :exec && ex.host == "lab1"
+            lx = Sweep.launcher_for(ex)
+            @test lx isa Sweep.BatchLauncher.ExecLauncher
+            @test lx.host == "lab1" && lx.maxproc == 6      # the cap applies there as it does here
+
+            # No host is THIS machine, which has a target of its own: nothing to sign in to, and
+            # its environment is prepared directly rather than over a session.
+            @test Sweep.cluster(Dict("name" => "h", "kind" => "exec", "root" => root,
+                                     "project" => tempdir())) isa Sweep.LocalTarget
+            # …and `local` is the older spelling of exactly that, so a definition on disk still
+            # resolves rather than erroring on an unknown kind.
+            @test Sweep.cluster_args(Dict("name" => "h", "kind" => "local", "root" => root)).kind == "exec"
+            @test Sweep.cluster(Dict("name" => "h", "kind" => "local", "root" => root,
+                                     "project" => tempdir())) isa Sweep.LocalTarget
+            # An exec target with a host needs its store on that host, like any other remote one.
+            e5 = try; Sweep.cluster_args(Dict("name" => "b", "kind" => "exec", "host" => "lab1"))
+                 catch x; x; end
+            @test occursin("no `root_remote`", sprint(showerror, e5))
             @test occursin("pbs", Sweep._target_line(Sweep.PbsTarget(; root = root)))
         end
     end
@@ -2543,6 +2568,22 @@ end
                     f === :chunk && continue
                     @test getfield(t3, f) == getfield(mk(procs = 3), f)
                 end
+
+                # Same for a CLUSTER target, and for the other two rebuilders. Each names every
+                # field in order, so a field added to the struct is dropped by whichever of them
+                # nobody remembered — and the failure is at construction, on the path a cell header
+                # takes. Walking fieldnames is what makes the next field safe rather than this one.
+                ct = Sweep.ClusterTarget("login"; kind = :exec, root_remote = "/s", procs = 7,
+                                         account = "acct", prologue = "module load julia")
+                for (label, rebuilt) in (("with_chunk", Sweep.with_chunk(ct, 9)),
+                                         ("with_resources", Sweep.with_resources(ct, (; cpus = 8))))
+                    for f in fieldnames(Sweep.ClusterTarget)
+                        f in (:chunk, :resources) && continue
+                        @test (label, f, getfield(rebuilt, f)) == (label, f, getfield(ct, f))
+                    end
+                end
+                @test Sweep.with_chunk(ct, 9).chunk == 9
+                @test Sweep.with_resources(ct, (; cpus = 8)).resources.cpus == 8
 
                 # …and the definition's number arrives as a STRING out of the registry.
                 spec = Dict("name" => "box", "kind" => "local", "root" => root,

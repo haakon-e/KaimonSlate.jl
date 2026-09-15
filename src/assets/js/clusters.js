@@ -18,6 +18,7 @@ const editing = signal(null);        // the target being edited (null = the "new
 const cmsg = signal(null);           // {text, err}
 const more = signal(false);          // show the set-once fields (chunk, account, prologue, …)
 
+const isExecKind = k => k === 'exec' || k === 'local';
 const confirmP = (msg, ok, cls) => (window.confirmDark ? window.confirmDark(msg, ok, cls) : Promise.resolve(window.confirm(msg)));
 
 // Form fields.
@@ -49,7 +50,8 @@ function seed(c) {
   kPartition.value = g('partition'); kWalltime.value = g('walltime'); kCpus.value = g('cpus');
   kMem.value = g('mem'); kChunk.value = g('chunk'); kAccount.value = g('account');
   kPrologue.value = g('prologue'); kNote.value = g('note'); kProcs.value = g('procs');
-  if (kHost.value && kKind.value !== 'local') { loadScheduler(kHost.value); loadSessions(); }
+  if (kHost.value && !isExecKind(kKind.value)) { loadScheduler(kHost.value); loadSessions(); }
+  if (kHost.value && isExecKind(kKind.value)) loadSessions();
 }
 
 // How many of the folded-away fields this target actually uses. Shown on the disclosure so a
@@ -61,13 +63,14 @@ const filledExtras = () =>
 export function clusterSummary(c) {
   if (!c) return '';
   const k = c.kind || 'slurm';
-  const bits = [k === 'local' ? 'here' : (c.host || 'no host yet')];
-  if (k === 'local' && c.procs) bits.push(c.procs + ' at once');
+  const ex = isExecKind(k);
+  const bits = [ex ? (c.host || 'here') : (c.host || 'no host yet')];
+  if (ex && c.procs) bits.push(c.procs + ' at once');
   if (c.partition) bits.push(c.partition);
   if (c.walltime) bits.push('≤' + c.walltime);
   if (c.cpus) bits.push(c.cpus + ' cpu');
   if (c.mem) bits.push(c.mem);
-  return k + ' · ' + bits.join(' · ');
+  return (ex ? 'no scheduler' : k) + ' · ' + bits.join(' · ');
 }
 
 function save() {
@@ -84,7 +87,7 @@ function save() {
   put('partition', kPartition.value); put('walltime', kWalltime.value); put('cpus', kCpus.value);
   put('mem', kMem.value); put('chunk', kChunk.value); put('account', kAccount.value);
   put('prologue', kPrologue.value); put('note', kNote.value);
-  if (kKind.value === 'local') put('procs', kProcs.value);
+  if (isExecKind(kKind.value)) put('procs', kProcs.value);
   cmsg.value = { text: 'Saving…' };
   fetch('/api/clusters', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     .then(r => r.json()).then(d => {
@@ -148,7 +151,9 @@ function Partitions() {
 }
 
 export function Clusters() {
-  const cs = clusters.value, e = editing.value, isLocal = kKind.value === 'local';
+  const cs = clusters.value, e = editing.value;
+  // `local` is the older spelling of `exec` with no host; a definition on disk still uses it.
+  const isExec = kKind.value === 'exec' || kKind.value === 'local';
   return html`<div>
     <div class="msg"><strong>Compute targets</strong><span style="display:block;margin-top:3px;font-size:.78rem;color:#7a82a4;font-weight:400">Where sweep cells send their jobs.</span></div>
     <div class="rppreglist">
@@ -168,12 +173,20 @@ export function Clusters() {
         <select class="rpptr" value=${kKind.value} onChange=${ev => kKind.value = ev.target.value}>
           <option value="slurm">slurm</option>
           <option value="pbs">pbs</option>
-          <option value="local">local — no scheduler</option>
+          <option value="exec">no scheduler — Slate runs the processes</option>
         </select>
-        ${isLocal ? html`<span class="pddim">runs here, no scheduler</span>` : null}</div>
-      ${isLocal ? html`
+        ${isExec ? html`<span class="pddim">${kHost.value.trim() ? 'on ' + kHost.value.trim() : 'here'}</span>` : null}</div>
+      ${isExec ? html`
+        <div class="rpprow"><label>Host</label>
+          <input class="rpppre" autocomplete="off" spellcheck="false"
+            placeholder="ssh host to run on — blank runs on this machine"
+            value=${kHost.value} onInput=${ev => kHost.value = ev.target.value}
+            onBlur=${() => loadSessions()}/></div>
+        ${kHost.value.trim() ? Session() : null}
         <div class="rpprow"><label>Store</label>
-          <input class="rpproot" autocomplete="off" spellcheck="false" placeholder="/path/to/store  (on THIS machine)" value=${kRoot.value} onInput=${ev => kRoot.value = ev.target.value}/></div>
+          ${kHost.value.trim()
+            ? html`<input class="rpproot" autocomplete="off" spellcheck="false" placeholder="/path/to/store  (on THAT machine)" value=${kRootRemote.value} onInput=${ev => kRootRemote.value = ev.target.value}/>`
+            : html`<input class="rpproot" autocomplete="off" spellcheck="false" placeholder="/path/to/store  (on THIS machine)" value=${kRoot.value} onInput=${ev => kRoot.value = ev.target.value}/>`}</div>
         ${/* With no scheduler there is nothing else deciding how much of the machine a sweep takes.
               Each task is a whole Julia loading the project, so this is a memory question rather than
               a core-count one — hence a default well under the core count, overridable here. */ null}
@@ -205,7 +218,7 @@ export function Clusters() {
       <span class="pddim">a cell can override these</span></div>
     <div class="rpprow"><label>Project</label>
           <input class="rpppre" autocomplete="off" spellcheck="false" placeholder="/path/to/project  (folder with Project.toml, on the cluster)" value=${kProject.value} onInput=${ev => kProject.value = ev.target.value}/></div>`}
-      ${isLocal ? html`
+      ${isExec ? html`
         <div class="rpprow"><label>Project</label>
           <input class="rpppre" autocomplete="off" spellcheck="false" placeholder="/path/to/project  (folder with Project.toml)" value=${kProject.value} onInput=${ev => kProject.value = ev.target.value}/></div>` : null}
       ${/* Everything a site sets once and then forgets. Folded away because a form you scroll is a
@@ -216,7 +229,7 @@ export function Clusters() {
         <div class="rpprow"><label>Chunk</label>
           <input class="rppn" type="text" inputmode="numeric" autocomplete="off" placeholder="units" value=${kChunk.value} onInput=${ev => kChunk.value = ev.target.value}/>
           <span class="pddim">sweep units per job; blank = auto</span></div>
-        ${isLocal ? null : html`
+        ${isExec ? null : html`
           <div class="rpprow"><label>Account</label>
             <input class="rppport" autocomplete="off" spellcheck="false" placeholder="charge code" value=${kAccount.value} onInput=${ev => kAccount.value = ev.target.value}/>
             <span class="pddim">if the site bills one</span></div>

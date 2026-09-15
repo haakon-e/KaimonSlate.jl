@@ -29,16 +29,26 @@ cell submits to:
 | Field | What it is |
 | --- | --- |
 | **Name** | what a cell writes as `cluster=…`. A plain identifier — it goes in a cell header. |
-| **Kind** | `slurm`, `pbs`, or `local` to run the same units as processes here with no scheduler. |
-| **Login host** | the ssh host you submit from. Slate asks it what scheduler it has and offers the queues it reports. |
-| **Store** | a path **on the cluster**. Put it on scratch: `$HOME` is a few tens of GB and is not built for parallel writes. |
+| **Kind** | What *schedules* the work: `slurm`, `pbs`, or `exec` — no scheduler at all, Slate starting the processes itself. |
+| **Host** | where the work runs. For `slurm`/`pbs` it is the node you submit from, and Slate offers the queues it reports. For `exec` it is optional: blank runs on this machine. |
+| **Store** | a path **on the machine the work runs on** (this one, if Host is blank). On a cluster put it on scratch: `$HOME` is a few tens of GB and is not built for parallel writes. |
 | **Partition / walltime / cpus / mem** | what each job asks for. A cell may override any of them. |
 | **Project** | the folder with the `Project.toml` the units run in. |
 | **Chunk** | how many sweep units ride one scheduler job. |
-| **At once** | `local` only: how many tasks run in parallel. Blank follows the machine setting below. |
+| **At once** | `exec` only: how many tasks run in parallel on that machine. Blank follows the setting below. |
 | **Prologue** | shell run before every job — `module load julia`, usually. |
 
-A `local` target has no scheduler deciding how much of the machine it may take, so Slate does. Each
+### No scheduler
+
+`exec` is the absence of a scheduler, not a place. `kind` says what schedules the work and **Host**
+says where it runs, so the two are independent: blank host runs here, and a host with no queueing
+system on it — a lab workstation, a cloud VM — is a target like any other. Slate starts the
+processes over that machine's session, watches them by pid, and kills them on cancel; the store,
+the environment and the task runner are provisioned exactly as they are for a cluster.
+
+(`local` is the older spelling of `exec` with no host. Definitions using it keep working.)
+
+An `exec` target has no scheduler deciding how much of the machine it may take, so Slate does. Each
 task is a whole Julia loading the project, which makes memory rather than cores the binding
 constraint, and the default is well under the core count for that reason. A workstation with room to
 spare can say so once for every local target on this machine:

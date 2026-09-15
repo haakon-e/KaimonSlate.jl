@@ -286,13 +286,24 @@ end
 # table, which is precisely what squeue does on a cluster.
 struct ExecLauncher <: Launcher
     maxproc::Int
+    # Empty runs the work HERE. Otherwise it is a machine with no scheduler on it — a lab box, a
+    # cloud VM — reached over its authenticated session, exactly as a login node is. "No scheduler"
+    # and "this machine" are separate facts, and welding them together left the useful combination
+    # of the two with no way to be said.
+    host::String
+    runner::Any                  # (host, script) -> (ok, output)
 end
 # The binding constraint is MEMORY, not cores: every task process is a separate Julia that loads
 # the project, so this is deliberately far below the core count. Raise it only with an eye on RSS.
 # A sweep picks its number through `Sweep.local_procs`, which falls back to this when neither the
 # target nor the machine setting names one.
 default_maxproc() = clamp(Sys.CPU_THREADS ÷ 3, 1, 4)
-ExecLauncher(; maxproc::Int = default_maxproc()) = ExecLauncher(maxproc)
+ExecLauncher(host::AbstractString = ""; maxproc::Int = default_maxproc(),
+             runner = (h, sc) -> _local_run(sc)) =
+    ExecLauncher(maxproc, String(host), runner)
+
+_remote(l::ExecLauncher) = !isempty(l.host)
+_there(l::ExecLauncher, script) = l.runner(l.host, script)
 
 _jobdir(root) = joinpath(root, "jobs")
 _jobfile(root, name) = joinpath(_jobdir(root), name)
@@ -319,10 +330,18 @@ end
 
 function submit!(l::ExecLauncher, spec::JobSpec)
     isempty(spec.chunks) && return ""
+    slices = _deal(spec.chunks, l.maxproc)
+    # A hint from THIS machine's memory, which is the right answer only when the work runs here.
+    # A remote box is sized by whoever configured it, so nothing is imposed on it.
+    heap = _remote(l) ? "" : _local_heap_hint(length(slices))
+    pids = _remote(l) ? _exec_start_there(l, spec, slices, heap) :
+                        _exec_start_here(spec, slices, heap)
+    return join(pids, ",")
+end
+
+function _exec_start_here(spec::JobSpec, slices, heap)
     mkpath(_jobdir(spec.root)); mkpath(spec.logdir)
     pids = Int[]
-    slices = _deal(spec.chunks, l.maxproc)
-    heap = _local_heap_hint(length(slices))
     for (i, slice) in enumerate(slices)
         logf = joinpath(spec.logdir, "$(spec.name).$(i).log")
         cmd = pipeline(Cmd(`sh -c $(task_command(spec, slice; heap = heap))`);
@@ -331,7 +350,28 @@ function submit!(l::ExecLauncher, spec::JobSpec)
         push!(pids, getpid(p))
     end
     write(_jobfile(spec.root, spec.name), join(pids, "\n"))
-    return join(pids, ",")
+    return pids
+end
+
+# One round trip starts every slice and hands back their pids. `nohup … &` with stdin closed is
+# what survives the session closing: there is no scheduler here to own the process, so the only
+# thing keeping it alive is its own detachment.
+#
+# The pid file is written ON THE FAR SIDE, where the pids mean something — the same place `poll`
+# and `cancel!` read it from. A pid is only meaningful to the kernel that issued it.
+function _exec_start_there(l::ExecLauncher, spec::JobSpec, slices, heap)
+    lines = ["mkdir -p $(_shq(_jobdir(spec.root))) $(_shq(spec.logdir))", "pids=''"]
+    for (i, slice) in enumerate(slices)
+        logf = joinpath(spec.logdir, "$(spec.name).$(i).log")
+        push!(lines, "nohup sh -c $(_shq(task_command(spec, slice; heap = heap))) " *
+                     "> $(_shq(logf)) 2>&1 < /dev/null &")
+        push!(lines, "pids=\"\$pids \$!\"")
+    end
+    push!(lines, "printf '%s\\n' \$pids > $(_shq(_jobfile(spec.root, spec.name)))")
+    push!(lines, "printf '%s\\n' \$pids")
+    ok, out = _there(l, join(lines, "\n"))
+    ok || error("could not start work on $(l.host): " * first(strip(String(out)), 300))
+    return [something(tryparse(Int, s), 0) for s in split(String(out); keepempty = false)]
 end
 
 """
@@ -347,13 +387,19 @@ to something else — the chunk's own status says whether it is still going.
 """
 job_pids(::Launcher, ::AbstractString, ::AbstractString) = Int[]
 
-function job_pids(::ExecLauncher, root::AbstractString, name::AbstractString)
+function job_pids(l::ExecLauncher, root::AbstractString, name::AbstractString)
     f = _jobfile(String(root), String(name))
-    isfile(f) || return Int[]
-    return [something(tryparse(Int, s), 0) for s in split(read(f, String); keepempty = false)]
+    txt = if _remote(l)
+        ok, o = _there(l, "cat $(_shq(f)) 2>/dev/null")
+        ok ? String(o) : ""
+    else
+        isfile(f) ? read(f, String) : ""
+    end
+    return [something(tryparse(Int, x), 0) for x in split(txt; keepempty = false)]
 end
 
 function poll(l::ExecLauncher, root::AbstractString, names)
+    _remote(l) && return _exec_poll_there(l, root, names)
     out = Dict{String,Symbol}()
     for name in names
         f = _jobfile(root, name)
@@ -367,7 +413,31 @@ function poll(l::ExecLauncher, root::AbstractString, names)
     return out
 end
 
+# Every name in ONE round trip, like every other backend's poll: a sweep can have hundreds of
+# submissions and the answer has to cost one call, not one call each. `kill -0` is the far side's
+# `_alive` — it signals nothing and only asks whether the pid is still there.
+function _exec_poll_there(l::ExecLauncher, root, names)
+    out = Dict{String,Symbol}(String(n) => :unknown for n in names)
+    isempty(out) && return out
+    lines = String[]
+    for name in names
+        f = _jobfile(root, name)
+        push!(lines, "n=0; if [ -f $(_shq(f)) ]; then while read p; do " *
+                     "[ -n \"\$p\" ] && kill -0 \$p 2>/dev/null && n=\$((n+1)); " *
+                     "done < $(_shq(f)); fi; printf '%s\\t%s\\n' $(_shq(String(name))) \$n")
+    end
+    ok, txt = _there(l, join(lines, "\n"))
+    ok || return out
+    for line in eachsplit(String(txt), '\n'; keepempty = false)
+        parts = split(line, '\t'); length(parts) == 2 || continue
+        alive = something(tryparse(Int, strip(parts[2])), 0)
+        out[String(strip(parts[1]))] = alive > 0 ? :running : :unknown
+    end
+    return out
+end
+
 function cancel!(l::ExecLauncher, root::AbstractString, names)
+    _remote(l) && return _exec_cancel_there(l, root, names)
     n = 0
     for name in names
         f = _jobfile(root, name); isfile(f) || continue
@@ -380,7 +450,22 @@ function cancel!(l::ExecLauncher, root::AbstractString, names)
     return n
 end
 
-function log_files(::ExecLauncher, root::AbstractString, name::AbstractString)
+function _exec_cancel_there(l::ExecLauncher, root, names)
+    lines = String[]
+    for name in names
+        f = _jobfile(root, name)
+        push!(lines, "if [ -f $(_shq(f)) ]; then while read p; do " *
+                     "[ -n \"\$p\" ] && kill -TERM \$p 2>/dev/null; done < $(_shq(f)); " *
+                     "rm -f $(_shq(f)); echo x; fi")
+    end
+    isempty(lines) && return 0
+    ok, txt = _there(l, join(lines, "\n"))
+    return ok ? count(==("x"), [strip(s) for s in eachsplit(String(txt), '\n'; keepempty = false)]) : 0
+end
+
+function log_files(l::ExecLauncher, root::AbstractString, name::AbstractString)
+    # `.log` here, not the scheduler's `.out`: this launcher names its own files.
+    _remote(l) && return _remote_log_files((sc) -> _there(l, sc), root, name; ext = "log")
     dir = joinpath(String(root), "logs")
     isdir(dir) || return NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
     out = NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
@@ -394,7 +479,8 @@ function log_files(::ExecLauncher, root::AbstractString, name::AbstractString)
     return out
 end
 
-function log_stat(::ExecLauncher, path::AbstractString)
+function log_stat(l::ExecLauncher, path::AbstractString)
+    _remote(l) && return _remote_log_stat((sc) -> _there(l, sc), path)
     isfile(path) || return (; bytes = -1, modified = 0)
     return (; bytes = Int(filesize(path)),
               modified = try; round(Int, mtime(path)); catch; 0; end)
@@ -422,8 +508,9 @@ function _whole_lines(buf::Vector{UInt8}, from::Int, size::Int; aligned::Bool = 
     return (String(@view buf[lo:hi]), from + lo - 1, from + hi - 1)
 end
 
-function log_slice(::ExecLauncher, path::AbstractString; offset::Integer = -1 << 16,
+function log_slice(l::ExecLauncher, path::AbstractString; offset::Integer = -1 << 16,
                    nbytes::Integer = 1 << 16)
+    _remote(l) && return _remote_log_slice((sc) -> _there(l, sc), path, offset, nbytes)
     isfile(path) || return (; text = "", from = 0, to = 0, size = 0)
     size = Int(filesize(path))
     n = max(0, Int(nbytes))
@@ -446,8 +533,10 @@ end
 # `rg --json` emits one object per event; a `match` carries `absolute_offset` and the line's text,
 # which is exactly the pair the viewer needs and avoids parsing a `grep -bn` prefix out of content
 # that may itself contain colons. `--count-matches` is a second, cheap pass for the true total.
-function log_search(::ExecLauncher, path::AbstractString, pattern::AbstractString;
+function log_search(l::ExecLauncher, path::AbstractString, pattern::AbstractString;
                     ignorecase::Bool = false, regex::Bool = false, limit::Integer = 1000)
+    _remote(l) && return _remote_log_search((sc) -> _there(l, sc), path, pattern,
+                                            ignorecase, regex, limit)
     (isfile(path) && !isempty(pattern)) ||
         return (; total = 0, hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[],
                   capped = false)
@@ -544,7 +633,8 @@ function _json_text(s::AbstractString)
     return rstrip(String(take!(io)), '\n')
 end
 
-log_tail(::ExecLauncher, path::AbstractString; lines::Int = 500) =
+log_tail(l::ExecLauncher, path::AbstractString; lines::Int = 500) =
+    _remote(l) ? _remote_log_tail((sc) -> _there(l, sc), path, lines) :
     isfile(path) ? tail_file(path, lines) : ""
 
 function logs(l::ExecLauncher, root::AbstractString, name::AbstractString; lines::Int = 200)
@@ -752,8 +842,8 @@ end
 
 # Both schedulers list and tail identically: the files are on a filesystem reached through the same
 # session, and which scheduler wrote them does not change how they are read.
-_remote_log_files(runner, root, name) = begin
-    glob = "$(joinpath(String(root), "logs"))/$(name).*.out"
+_remote_log_files(runner, root, name; ext::AbstractString = "out") = begin
+    glob = "$(joinpath(String(root), "logs"))/$(name).*.$(ext)"
     ok, txt = runner(replace(_STAT_LINE, "%GLOB%" => glob) * " 2>/dev/null")
     ok ? _parse_log_listing(txt) :
          NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
