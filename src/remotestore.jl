@@ -208,7 +208,15 @@ function run_there(host::AbstractString, script::AbstractString)
     has_delegate() && return _via(() -> (false, _offline(host)), :exec,
                                   (; host = String(host), script = String(script)))
     connect!(host) || return (false, _offline(host))
-    return SshTransport.exec(String(host), String(script); ask = _ask)
+    ok, out = SshTransport.exec(String(host), String(script); ask = _ask)
+    # A session can die between one command and the next — the far side reboots, a NAT drops the
+    # flow — and the first call to notice is the one that fails. The transport drops a session it
+    # could not open a channel on, so "no longer connected" distinguishes that from a command which
+    # simply exited non-zero, and the caller never sees the reconnect.
+    if !ok && !SshTransport.connected(String(host)) && connect!(host)
+        ok, out = SshTransport.exec(String(host), String(script); ask = _ask)
+    end
+    return (ok, out)
 end
 
 # What to say when work needs a host nobody has signed in to. Naming the control matters: the bare

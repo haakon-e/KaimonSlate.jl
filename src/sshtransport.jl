@@ -331,10 +331,37 @@ function _start(s::Session, ch, cmd::AbstractString)
                           ch, "exec", 4, cmd, length(cmd)))
 end
 
+# A session that cannot open a CHANNEL is finished, whatever its `alive` flag still says. The
+# transport can die quietly — the far end reboots, a NAT drops the flow, an idle timeout fires — and
+# nothing tells us: the flag stays true, `connected` keeps reporting a healthy session, and every
+# call after that fails identically at channel open. Recording it here is what lets the next
+# `connect!` build a new one instead of handing back the corpse, which is otherwise only cleared by
+# someone signing in by hand.
+function _channel_dead!(s::Session, why::AbstractString)
+    s.alive = false
+    s.err = String(why)
+    # Clearing the flag is not enough on its own: `session` reuses an entry whose OWNER task is
+    # still running, which it is here — the task is serving a transport that no longer carries
+    # anything. Drop the entry so the next caller builds a new one, exactly as `disconnect!` would.
+    key = s.ep.alias
+    dropped = lock(_REG_LOCK) do
+        get(_SESSIONS, key, nothing) === s ? (delete!(_SESSIONS, key); true) : false
+    end
+    # Off this task: `_channel_dead!` runs ON the session's owner, and the drop listener reaches
+    # back into the transport to discard what was riding the session. Announcing inline would have
+    # the owner waiting on work only the owner can do.
+    dropped && @async _announce_drop(key)
+    return nothing
+end
+
 "Run `cmd` on the session's host. `(ok, output)` with stdout and stderr interleaved."
 function _exec(s::Session, cmd::AbstractString; timeout::Real = 120.0)
     ch = _open_channel(s)
-    ch == C_NULL && return (false, "channel_open: " * _lasterr(s))
+    if ch == C_NULL
+        why = "channel_open: " * _lasterr(s)
+        _channel_dead!(s, why)
+        return (false, why)
+    end
     if _start(s, ch, cmd) != 0
         ccall((:libssh2_channel_free, LIB), Cint, (Ptr{Cvoid},), ch)
         return (false, "exec: " * _lasterr(s))
@@ -349,7 +376,11 @@ end
 function _exec_io(s::Session, cmd::AbstractString, input::Union{Vector{UInt8},IO,Nothing};
                   timeout::Real = 300.0)
     ch = _open_channel(s)
-    ch == C_NULL && return (false, UInt8[], "channel_open: " * _lasterr(s))
+    if ch == C_NULL
+        why = "channel_open: " * _lasterr(s)
+        _channel_dead!(s, why)
+        return (false, UInt8[], why)
+    end
     if _start(s, ch, cmd) != 0
         ccall((:libssh2_channel_free, LIB), Cint, (Ptr{Cvoid},), ch)
         return (false, UInt8[], "exec: " * _lasterr(s))
