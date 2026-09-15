@@ -89,6 +89,17 @@ const RE = KaimonSlate.ReportEngine
         # only where you ASK — the node is an output of the allocation — so placement is a step, and
         # the read-only view must never take that step (listing regions cannot queue for a node).
         withenv("KAIMONSLATE_CONFIG_HOME" => mktempdir()) do
+            # A pinned base reaches the spawn whatever the transport. Worker records are named by
+            # PORT under a directory with no host in it, so two hosts sharing a home filesystem
+            # share those records — one overwrites the other's, and a reap or the roster GC then
+            # deletes the files of a worker that is still running, which keeps its port and
+            # vanishes from the floor the allocator reads. Disjoint bases keep both apart.
+            for tr in (:tunnel, :direct)
+                r = RE.region_set!("pinned_$(tr)"; host = "shared", transport = tr, base_port = 9400)
+                @test RE._region_target(r).port == 9400
+            end
+            @test RE._region_target(RE.region_set!("unpinned"; host = "shared")).port == 0
+
             plain = RE.region_set!("plain"; host = "workstation")
             @test RE.region_scheduler(plain) === :none
             @test RE.region_host(plain) == "workstation"

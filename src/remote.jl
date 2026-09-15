@@ -3651,10 +3651,18 @@ _remote_env_key(origin_env, parent) = _proj_key(isempty(String(origin_env)) ? pa
 # region reclaims it on adoption. For a :direct region, `port` carries base_port as the range HINT —
 # fresh_spawn allocates a free slot from it (see _direct_port_slots) so the kernel lands in the
 # firewall-opened range, not the growing auto counter.
+#
+# A :tunnel region pins the same way, because the auto counter cannot see everything it needs to.
+# Worker records are named `worker-<port>.*` under a $HOME-relative directory with no host in the
+# name, so two hosts sharing a home filesystem share that directory: a spawn on one overwrites the
+# other's manifest, and reaping or the roster GC then deletes the records of a worker that is still
+# running. That worker keeps its port and drops out of `_port_floor`, which is what the allocator
+# later walks into. Disjoint bases per host keep the records disjoint too, since they are keyed by
+# port — so this is the same setting answering both.
 _region_target(r::Region; origin_env::AbstractString = r.preload, host::AbstractString = region_host(r)) =
     RemoteTarget(host; transport = r.transport,
         project = "~/.cache/kaimonslate/remote/" * _proj_key(origin_env),
-        port = (r.transport === :direct ? r.base_port : 0),
+        port = r.base_port,
         origin_env = origin_env, datadir = r.data_root, cache_root = r.cache_root, region = r.name,
         sysimage = r.sysimage, curve = r.curve)
 
@@ -4034,7 +4042,7 @@ function _region_reconcile_impl!(r::Region)
         # 3 (each worker owns port..port+2) so you know exactly which range to open in the firewall.
         # Otherwise (tunnel, or no base) auto-assign from _next_ports, floored above the live roster —
         # stride 2 for a :tunnel region (its blob picks a worker-chosen free port, not gate+2).
-        ports = (r.transport === :direct && r.base_port > 0) ?
+        ports = r.base_port > 0 ?
             _direct_port_slots(r.base_port, deficit; roster = roster, label = "region[$(r.name)]") :
             begin
                 floor = _port_floor(host; workers = roster)   # never deal a live worker's ports (see _port_floor)
