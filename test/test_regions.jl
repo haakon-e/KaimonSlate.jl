@@ -84,6 +84,38 @@ const RE = KaimonSlate.ReportEngine
         end
     end
 
+    @testset "a session that cannot open a channel is dropped" begin
+        # A transport dies quietly — the far side reboots, a NAT drops the flow, an idle timeout
+        # fires — and nothing says so. `alive` is set once at authentication and never revalidated,
+        # so `connected` keeps reporting a healthy session, `connect!` returns on that flag without
+        # reconnecting, and every call after it fails at channel open. `session` will not replace
+        # the entry either: it reuses one whose OWNER task is still running, which it is, serving a
+        # transport that carries nothing. The only thing that cleared it was an interactive login,
+        # which is why this is indistinguishable from broken key auth from the outside.
+        ST = KaimonSlate.SshTransport
+        host = "sessiontest.invalid"
+        ep = ST.Endpoint(host, host, 22, "nobody", String[], "")
+        s = ST.Session(ep, Cint(-1), C_NULL, Channel{Any}(1), nothing, ST.Prompter(host),
+                       true, "", ST.Fwd[])
+        try
+            lock(ST._REG_LOCK) do; ST._SESSIONS[host] = s; end
+            @test ST.connected(host)                       # the flag alone says healthy
+            ST._channel_dead!(s, "channel_open: Unable to send channel-open request")
+            @test !ST.connected(host)                      # …and now it does not
+            @test !haskey(ST._SESSIONS, host)              # gone, so the next open builds a new one
+            @test occursin("channel_open", s.err)          # and says why
+            # Evicting only its OWN entry: a session replaced while this one was failing belongs to
+            # whoever opened it, and dropping that would take a live connection down with a dead one.
+            other = ST.Session(ep, Cint(-1), C_NULL, Channel{Any}(1), nothing, ST.Prompter(host),
+                               true, "", ST.Fwd[])
+            lock(ST._REG_LOCK) do; ST._SESSIONS[host] = other; end
+            ST._channel_dead!(s, "channel_open: again")
+            @test ST.connected(host) && ST._SESSIONS[host] === other
+        finally
+            lock(ST._REG_LOCK) do; delete!(ST._SESSIONS, host); end
+        end
+    end
+
     @testset "a region on a cluster is placed, not addressed" begin
         # For an ordinary machine `host` IS where the worker goes. For a cluster's front door it is
         # only where you ASK — the node is an output of the allocation — so placement is a step, and
