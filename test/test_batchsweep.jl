@@ -1422,6 +1422,15 @@ end
             @test Sweep.log_search(r, path, "INFO"; limit = 0).total == 59_880
             @test isempty(Sweep.log_search(r, path, "INFO"; limit = 0).hits)
 
+            # A pattern the engine REJECTS is not a file with no matches in it. ripgrep says which
+            # of the two it is (exit 2 vs 1), and a zero that actually meant "I could not read your
+            # regex" is the one answer a searcher has no way to question.
+            bad = try; Sweep.log_search(r, path, "(unclosed"; regex = true); nothing
+                  catch x; sprint(showerror, x); end
+            @test bad !== nothing && occursin("rejected", bad) && occursin("unclosed", bad)
+            # …while the same text searched LITERALLY is a legitimate zero.
+            @test Sweep.log_search(r, path, "(unclosed").total == 0
+
             # Case folding is the search's, not the caller's.
             @test Sweep.log_search(r, path, "error"; ignorecase = true).total == 12
             @test Sweep.log_search(r, path, "error").total == 0

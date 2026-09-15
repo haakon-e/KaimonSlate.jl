@@ -461,14 +461,38 @@ end
 # many times the pattern occurs; the hit list is a JSON object per match, which for a term appearing
 # on most lines runs to several times the size of the file. `-m` bounds what ripgrep EMITS, so the
 # limit is enforced at the source rather than by discarding what has already crossed a pipe.
+# What ripgrep said, as one line a reader can act on. Its complaint spans several lines of caret-art
+# pointing into the pattern — helpful in a terminal, noise in a status bar — and the sentence worth
+# keeping is the one it labels `error:`.
+function _rg_message(err::AbstractString)
+    best = ""
+    for l in eachsplit(err, '\n')
+        s = String(strip(l))
+        (isempty(s) || startswith(s, "^") || startswith(s, "|") || startswith(s, "=")) && continue
+        s = replace(s, r"^rg: *" => "")
+        startswith(s, "error:") && return "search pattern rejected: " * strip(s[7:end])
+        isempty(best) && (best = s)
+    end
+    return isempty(best) ? "the search pattern was rejected" : first(best, 200)
+end
+
 function _rg_search(rg, path, pattern, ignorecase, regex, limit)
     flags = String[]
     ignorecase && push!(flags, "-i")
     regex || push!(flags, "-F")
-    run_rg(extra) = try
-        read(Cmd(String[rg..., flags..., extra..., "--", String(pattern), String(path)]), String)
-    catch
-        ""                                   # rg exits 1 on "no matches", which is not an error
+    # ripgrep says which of the two it is: 1 is "no matches", 2 is "I could not do that" — an
+    # unbalanced regex, an unreadable file. Treating both as no matches turns a pattern the engine
+    # rejected into a confident answer of zero, which is the one reply a searcher cannot question.
+    run_rg(extra) = begin
+        out, err = IOBuffer(), IOBuffer()
+        cmd = Cmd(String[rg..., flags..., extra..., "--", String(pattern), String(path)])
+        code = try
+            run(pipeline(ignorestatus(cmd); stdout = out, stderr = err)).exitcode
+        catch e
+            error("could not run ripgrep: " * first(sprint(showerror, e), 160))
+        end
+        code >= 2 && error(_rg_message(String(take!(err))))
+        return String(take!(out))
     end
     total = something(tryparse(Int, strip(run_rg(["-c"]))), 0)
     hits = NamedTuple{(:offset, :line, :text),Tuple{Int,Int,String}}[]
