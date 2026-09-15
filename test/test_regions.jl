@@ -567,8 +567,12 @@ const RE = KaimonSlate.ReportEngine
         # of them is the failure this guard exists to catch, and it shows up as every worker on the
         # other path dying at boot.
         allowed = Set(readdir(Sys.STDLIB)) ∪ Set(["Base", "Core", "Main", "KaimonGate",
-                                                  "SlateExtensionsBase", "ripgrep_jll"])
-        # KaimonGate is not among them: it rides its own scratchspace, inserted ahead of the
+                                                  "SlateExtensionsBase"])
+        # `ripgrep_jll` is deliberately NOT in that list. The payload resolves it softly at load
+        # (`BatchLauncher._resolve_rg`) precisely so a host that cannot see it loses log SEARCH
+        # rather than the whole batch fabric — an `import` of it here would undo that. It is still
+        # provisioned both ways, so the good case gets the artifact rather than a PATH `rg`.
+        # KaimonGate is not among them either: it rides its own scratchspace, inserted ahead of the
         # notebook project rather than into this env.
         for pkg in ("SlateExtensionsBase", "ripgrep_jll")
             @test occursin(pkg, read(joinpath(src, "worker_infra", "Project.toml"), String))

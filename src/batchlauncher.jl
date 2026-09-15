@@ -14,9 +14,6 @@
 module BatchLauncher
 
 import Dates
-# Reachable by name in both contexts that load this file: a direct dependency of the hub, and on the
-# worker's infra environment. Imported here so that searching never loads a package.
-import ripgrep_jll
 
 export Launcher, ExecLauncher, SlurmLauncher, PbsLauncher, JobSpec, submit!, poll, cancel!, logs,
        log_files, log_tail, log_stat, log_slice, log_search, job_pids
@@ -209,7 +206,31 @@ end
 # well as the hub — the artifact is on both paths, but named by neither. Falls back to an `rg` on
 # PATH, which is what a remote login node offers. `nothing` when there is none, and the caller says
 # so rather than pretending the file had no matches.
-_rg() = ripgrep_jll.rg().exec
+# ripgrep, resolved SOFTLY and off the request path.
+#
+# Soft, because this file is included into every worker behind one `try`: a hard `import` that cannot
+# resolve takes the whole batch fabric down with it, and a notebook loses `@sweep` entirely because a
+# LOG SEARCH dependency was missing. Searching is the only thing here that wants it.
+#
+# Off the request path, because loading a package is something a process does while starting, not
+# while answering. The worker reaches this file by `include`, so the module body below runs at boot
+# and the answer is cached before any browser can ask. The hub reaches it as a package, where the
+# body is baked at precompile time and cannot run — there it resolves on first use instead, which is
+# a lookup of an already-loaded direct dependency rather than a load.
+const _RG_UUID = "e10fc14b-37cd-5cbc-b289-ad01b12ebaad"
+const _RG = Ref{Any}(missing)         # missing = not looked for yet; nothing = looked, not found
+
+function _resolve_rg()
+    try
+        m = Base.require(Base.PkgId(Base.UUID(_RG_UUID), "ripgrep_jll"))
+        return collect(String, Base.invokelatest(getfield(m, :rg)).exec)
+    catch
+        w = Sys.which("rg")           # a login node usually has one
+        return w === nothing ? nothing : String[w]
+    end
+end
+
+_rg() = _RG[] === missing ? (_RG[] = _resolve_rg()) : _RG[]
 
 """
     log_stat(launcher, path) -> (; bytes, modified)
@@ -304,6 +325,10 @@ ExecLauncher(host::AbstractString = ""; maxproc::Int = default_maxproc(),
 
 _remote(l::ExecLauncher) = !isempty(l.host)
 _there(l::ExecLauncher, script) = l.runner(l.host, script)
+
+# Warm the cache at module load — see `_rg`. Skipped while PRECOMPILING, which is the package case:
+# the body is baked, so the value would be frozen at `missing` anyway and the hub resolves lazily.
+ccall(:jl_generating_output, Cint, ()) == 1 || (_RG[] = _resolve_rg())
 
 _jobdir(root) = joinpath(root, "jobs")
 _jobfile(root, name) = joinpath(_jobdir(root), name)

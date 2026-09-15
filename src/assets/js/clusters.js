@@ -44,7 +44,11 @@ function seed(c) {
   editing.value = c;
   cmsg.value = null;
   const g = k => (c && c[k] != null ? String(c[k]) : '');
-  kName.value = g('name'); kKind.value = g('kind') || 'slurm'; kHost.value = g('host');
+  // A definition written before the split says `local`, which is no longer one of the options — so
+  // the select would render with nothing chosen. Normalised on the way in; saving then migrates it.
+  kName.value = g('name');
+  kKind.value = g('kind') === 'local' ? 'exec' : (g('kind') || 'slurm');
+  kHost.value = g('host');
   kRootRemote.value = g('root_remote'); kRoot.value = g('root');
   kProject.value = g('project'); kPayload.value = g('payload');
   kPartition.value = g('partition'); kWalltime.value = g('walltime'); kCpus.value = g('cpus');

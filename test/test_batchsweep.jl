@@ -1422,6 +1422,24 @@ end
             @test Sweep.log_search(r, path, "INFO"; limit = 0).total == 59_880
             @test isempty(Sweep.log_search(r, path, "INFO"; limit = 0).hits)
 
+            # ripgrep is resolved SOFTLY, and that is a property every worker depends on: this file
+            # is included behind one `try`, so a hard dependency that cannot resolve costs a
+            # notebook `@sweep` entirely — for a log search it never asked for. Resolution happens
+            # at module load, so by the time anything can ask, the answer is already cached.
+            @test Sweep.BatchLauncher._RG[] !== missing          # warmed at load, not on demand
+            @test Sweep.BatchLauncher._resolve_rg() !== nothing  # …and it found one here
+            # A machine with neither the artifact nor an `rg` says so, rather than reporting the
+            # file as empty of matches.
+            let saved = Sweep.BatchLauncher._RG[]
+                try
+                    Sweep.BatchLauncher._RG[] = nothing
+                    e = try; Sweep.log_search(r, path, "ERROR"); "" catch x; sprint(showerror, x); end
+                    @test occursin("ripgrep", e)
+                finally
+                    Sweep.BatchLauncher._RG[] = saved
+                end
+            end
+
             # A pattern the engine REJECTS is not a file with no matches in it. ripgrep says which
             # of the two it is (exit 2 vs 1), and a zero that actually meant "I could not read your
             # regex" is the one answer a searcher has no way to question.
