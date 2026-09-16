@@ -84,6 +84,17 @@ const RE = KaimonSlate.ReportEngine
         end
     end
 
+    @testset "a command routed into an allocation runs once" begin
+        # A step inherits the job's task count, so a bare `srun` in a job asking for N tasks runs
+        # the command N times. Pinned here because the allocation request and the step are written
+        # in different files and neither reads as wrong on its own.
+        v = (; host = "login", job = "4823", kind = :slurm)
+        step = RE._in_allocation(v, "c1", "echo hi")
+        @test occursin("--jobid=4823", step) && occursin("--ntasks=1", step)
+        # PBS has no `srun`, so it reaches the node the way every PBS site already does.
+        @test occursin("ssh ", RE._in_allocation((; host = "login", job = "9", kind = :pbs), "c1", "echo hi"))
+    end
+
     @testset "a session that cannot open a channel is dropped" begin
         # A transport dies quietly — the far side reboots, a NAT drops the flow, an idle timeout
         # fires — and nothing says so. `alive` is set once at authentication and never revalidated,

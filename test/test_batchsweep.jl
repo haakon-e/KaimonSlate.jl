@@ -531,9 +531,13 @@ end
         @test startswith(slurm_ask, "sbatch ")
         @test occursin("sleep 2147483647", slurm_ask)
         # Values are shell-quoted, so a walltime or a partition with anything awkward in it survives.
-        for want in ["-J 'hold'", "-t '00:30:00'", "-n 2", "-p 'gpu'", "--mem '512M'", "--gpus '1'"]
+        for want in ["-J 'hold'", "-t '00:30:00'", "-p 'gpu'", "--mem '512M'", "--gpus '1'"]
             @test occursin(want, slurm_ask)
         end
+        # `cpus` is cores for one task, the same thing it means on the batch path, where
+        # `_SBATCH_RENAME` spells it `--cpus-per-task`. As `-n` it asks for that many tasks instead.
+        @test occursin("--ntasks 1 --cpus-per-task 2", slurm_ask)
+        @test !occursin("-n 2", slurm_ask)
         # An account nobody named must not reach the scheduler as an empty flag.
         @test !occursin("-A", slurm_ask)
 

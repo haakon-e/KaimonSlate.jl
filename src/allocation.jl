@@ -280,7 +280,10 @@ end
 function _slurm_request_script(name; walltime, partition, cpus, mem, gpus, account, extra,
                                options = Dict{String,String}())
     args = String["-J", shq(name), "-t", shq(walltime), "-o", "/dev/null"]
-    cpus > 0 && append!(args, ["-n", string(cpus)])
+    # `cpus` is cores for the single task, the same meaning it carries on the batch path
+    # (`_SBATCH_RENAME`). `-n` is `--ntasks`, which would fan every command in the node out
+    # once per core.
+    cpus > 0 && append!(args, ["--ntasks", "1", "--cpus-per-task", string(cpus)])
     isempty(partition) || append!(args, ["-p", shq(partition)])
     isempty(mem)       || append!(args, ["--mem", shq(mem)])
     isempty(gpus)      || append!(args, ["--gpus", shq(gpus)])

@@ -505,7 +505,9 @@ _in_allocation(v, node, script) =
     v.kind === :pbs ?
         "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null " *
         Sweep.shq(node) * " " * Sweep.shq(script) :
-        "srun --jobid=" * v.job * " --overlap bash -c " * Sweep.shq(script)
+        # A step inherits the allocation's task count, so without `--ntasks=1` a job asking for N
+        # tasks runs this command N times. Everything routed here is one command on one node.
+        "srun --jobid=" * v.job * " --overlap --ntasks=1 bash -c " * Sweep.shq(script)
 
 # A cluster's login and compute nodes share a filesystem, so a file for a routed node is written
 # through the login session at the same path — no need to run anything on the node to place it.
