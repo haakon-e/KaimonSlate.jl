@@ -2724,9 +2724,11 @@ function _revoke_blob_client!(pubkey::AbstractString)
 end
 
 # Does the blob channel allow-list its clients, or accept any peer holding the server's public key?
-# Read from the environment switch KaimonGate itself reads, not from KaimonGate's internals: those
-# are not module-level names in every release, and the failed lookup answered "do not enforce".
-# Unset means enforce, so a setting this cannot read fails closed.
+# Read from the environment switch KaimonGate reads, not from KaimonGate's internals: those are not
+# module-level names in every release, and the failed lookup answered "do not enforce". Unset means
+# enforce, so a setting this cannot read fails closed. A gate told to allow any by its own config
+# file rather than by the environment therefore leaves this channel stricter than itself, which is
+# the direction to be wrong in.
 _truthy(v) = lowercase(strip(String(v))) in ("1", "true", "yes", "on")
 _blob_enforce() = !_truthy(get(ENV, "KAIMON_GATE_CURVE_ALLOW_ANY", ""))
 

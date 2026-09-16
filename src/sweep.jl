@@ -2574,8 +2574,9 @@ landed_digest(r::ShardedResult) = landed_digest(getfield(r, :rows))
 """
     refresh!(r) -> r
 
-Re-read the store and the scheduler. This is what a sweep cell does when it is re-run, and what a
-progress display calls on a timer.
+Re-read the store and the scheduler. This only looks: a started sweep with work left needs
+`reconcile_and_sync!` to send the next jobs out, which is what the card's poll does before calling
+this. A loop that only refreshes will watch a started sweep sit at zero.
 """
 function refresh!(r::ShardedResult)
     # Re-read the STORE, which for a cluster means catching the mirror up first — everything below
