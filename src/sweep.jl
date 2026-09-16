@@ -691,8 +691,10 @@ function launcher_for(t::ClusterTarget)
     # `exec` is not a scheduler — it is the absence of one, on a machine that is not this one. The
     # processes are Slate's to start, watch and kill, so the concurrency cap applies there exactly
     # as it does here; nothing else about the target changes.
+    # `root` is `job_root`, not `store_root`: the reconciler hands every launcher the hub's mirror,
+    # and this one's pid files are on the far side under the cluster's own path.
     t.kind === :exec &&
-        return BatchLauncher.ExecLauncher(t.host; maxproc = local_procs(t),
+        return BatchLauncher.ExecLauncher(t.host; maxproc = local_procs(t), root = job_root(t),
                                           runner = (h, sc) -> run_there(h, sc))
     ctor = t.kind === :slurm ? BatchLauncher.SlurmLauncher :
            t.kind === :pbs   ? BatchLauncher.PbsLauncher :

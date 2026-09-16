@@ -557,6 +557,27 @@ end
                        try; Sweep._unsupported_scheduler(:k8s); catch e; e.msg; end)
     end
 
+    @testset "a remote exec launcher looks for its processes where it started them" begin
+        # `reconcile!` hands every launcher `store_root`, which for a cluster is the hub's local
+        # MIRROR. `submit!` writes its pid file under the cluster's own path, so asking the far side
+        # about the mirror path finds nothing and every chunk reads as no longer running.
+        seen = String[]
+        l = BL.ExecLauncher("box"; root = "/scratch/there",
+                            runner = (h, sc) -> (push!(seen, sc); (true, "")))
+        BL.poll(l, "/hub/mirror", ["slate-abc"])
+        @test occursin("/scratch/there/procs/slate-abc", seen[end]) && !occursin("/hub/mirror", seen[end])
+        BL.cancel!(l, "/hub/mirror", ["slate-abc"])
+        @test occursin("/scratch/there/procs/slate-abc", seen[end]) && !occursin("/hub/mirror", seen[end])
+        BL.job_pids(l, "/hub/mirror", "slate-abc")
+        @test occursin("/scratch/there/procs/slate-abc", seen[end])
+        # Running here, the two roots are the same thing and the caller's is the only one there is.
+        here = BL.ExecLauncher(; maxproc = 1)
+        @test BL._procfile(here, "/tmp/store", "slate-abc") == "/tmp/store/procs/slate-abc"
+        # A cluster target wires the far-side root in; nothing else has to know about it.
+        ct = Sweep.ClusterTarget("box"; kind = :exec, root = "/mirror", root_remote = "/scratch/there")
+        @test Sweep.launcher_for(ct).root == Sweep.job_root(ct) == "/scratch/there"
+    end
+
     @testset "what is LEFT of an allocation" begin
         # SLURM reports it (`squeue %L`); PBS does not, so it is the walltime asked for minus the
         # walltime used — and both sides of that subtraction are scheduler times.
@@ -1500,6 +1521,7 @@ end
             let l = Sweep.launcher_for(t), jr = Sweep.job_root(t), nm = f["job"]
                 # Beyond PID_MAX, so `poll` can never read this fixture as a LIVE job and leave a
                 # sweep looking like it has work in flight that will never end.
+                mkpath(Sweep.BatchLauncher._jobdir(jr))
                 write(Sweep.BatchLauncher._jobfile(jr, nm), "999991\n999992\n")
                 @test Sweep.BatchLauncher.job_pids(l, jr, nm) == [999991, 999992]
                 again = Sweep.handle_action(t, r.run, r.params, r.keys, "logs")["loglist"]
@@ -1507,6 +1529,10 @@ end
                 @test g["step"] == 1 && g["pid"] == 999991
                 rm(Sweep.BatchLauncher._jobfile(jr, nm); force = true)
             end
+            # A remote exec submission writes its pid file where the pids mean something, which is
+            # the far side. So it must not sit in a directory the hub REPLACES on the way out, or
+            # the push deletes it and `poll` never sees a running chunk again.
+            @test !Sweep.sync_flags(basename(Sweep.BatchLauncher._jobdir("/r")), :out)
             # A scheduler's work is identified by its own job id, and this machine cannot signal it.
             @test isempty(Sweep.BatchLauncher.job_pids(
                 Sweep.BatchLauncher.SlurmLauncher("login"), root, f["job"]))

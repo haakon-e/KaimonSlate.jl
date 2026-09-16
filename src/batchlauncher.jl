@@ -312,6 +312,11 @@ struct ExecLauncher <: Launcher
     # and "this machine" are separate facts, and welding them together left the useful combination
     # of the two with no way to be said.
     host::String
+    # The store AS THE HOST SEES IT. Callers hand every launcher a root, and for a cluster that is
+    # the hub's local mirror: right for reading manifests, and a path the far side does not have.
+    # The pid files are over there, so this launcher carries where rather than being told. Empty
+    # when the work runs here and the two are the same path.
+    root::String
     runner::Any                  # (host, script) -> (ok, output)
 end
 # The binding constraint is MEMORY, not cores: every task process is a separate Julia that loads
@@ -319,18 +324,23 @@ end
 # A sweep picks its number through `Sweep.local_procs`, which falls back to this when neither the
 # target nor the machine setting names one.
 default_maxproc() = clamp(Sys.CPU_THREADS ÷ 3, 1, 4)
-ExecLauncher(host::AbstractString = ""; maxproc::Int = default_maxproc(),
+ExecLauncher(host::AbstractString = ""; maxproc::Int = default_maxproc(), root::AbstractString = "",
              runner = (h, sc) -> _local_run(sc)) =
-    ExecLauncher(maxproc, String(host), runner)
+    ExecLauncher(maxproc, String(host), String(root), runner)
 
 _remote(l::ExecLauncher) = !isempty(l.host)
 _there(l::ExecLauncher, script) = l.runner(l.host, script)
+# Where THIS launcher's pid files are, which is not where the caller reads manifests. See `root`.
+_procfile(l::ExecLauncher, root, name) = _jobfile(isempty(l.root) ? String(root) : l.root, name)
 
 # Warm the cache at module load — see `_rg`. Skipped while PRECOMPILING, which is the package case:
 # the body is baked, so the value would be frozen at `missing` anyway and the hub resolves lazily.
 ccall(:jl_generating_output, Cint, ()) == 1 || (_RG[] = _resolve_rg())
 
-_jobdir(root) = joinpath(root, "jobs")
+# NOT `jobs/`. A remote exec submission writes its pid file on the far side, and `jobs/` is the one
+# store directory the hub owns outright: a push wipes it and replaces it with the hub's copy, which
+# never held those pids. `poll` then found nothing and reported every chunk as no longer running.
+_jobdir(root) = joinpath(root, "procs")
 _jobfile(root, name) = joinpath(_jobdir(root), name)
 
 _alive(pid::Integer) = pid > 0 && try
@@ -413,7 +423,7 @@ to something else — the chunk's own status says whether it is still going.
 job_pids(::Launcher, ::AbstractString, ::AbstractString) = Int[]
 
 function job_pids(l::ExecLauncher, root::AbstractString, name::AbstractString)
-    f = _jobfile(String(root), String(name))
+    f = _procfile(l, root, String(name))
     txt = if _remote(l)
         ok, o = _there(l, "cat $(_shq(f)) 2>/dev/null")
         ok ? String(o) : ""
@@ -427,7 +437,7 @@ function poll(l::ExecLauncher, root::AbstractString, names)
     _remote(l) && return _exec_poll_there(l, root, names)
     out = Dict{String,Symbol}()
     for name in names
-        f = _jobfile(root, name)
+        f = _procfile(l, root, name)
         if !isfile(f)
             out[String(name)] = :unknown
             continue
@@ -446,7 +456,7 @@ function _exec_poll_there(l::ExecLauncher, root, names)
     isempty(out) && return out
     lines = String[]
     for name in names
-        f = _jobfile(root, name)
+        f = _procfile(l, root, name)
         push!(lines, "n=0; if [ -f $(_shq(f)) ]; then while read p; do " *
                      "[ -n \"\$p\" ] && kill -0 \$p 2>/dev/null && n=\$((n+1)); " *
                      "done < $(_shq(f)); fi; printf '%s\\t%s\\n' $(_shq(String(name))) \$n")
@@ -465,7 +475,7 @@ function cancel!(l::ExecLauncher, root::AbstractString, names)
     _remote(l) && return _exec_cancel_there(l, root, names)
     n = 0
     for name in names
-        f = _jobfile(root, name); isfile(f) || continue
+        f = _procfile(l, root, name); isfile(f) || continue
         for s in split(read(f, String); keepempty = false)
             pid = tryparse(Int, s); pid === nothing && continue
             _alive(pid) && (try; ccall(:kill, Cint, (Cint, Cint), pid, 15); catch; end)
@@ -478,7 +488,7 @@ end
 function _exec_cancel_there(l::ExecLauncher, root, names)
     lines = String[]
     for name in names
-        f = _jobfile(root, name)
+        f = _procfile(l, root, name)
         push!(lines, "if [ -f $(_shq(f)) ]; then while read p; do " *
                      "[ -n \"\$p\" ] && kill -TERM \$p 2>/dev/null; done < $(_shq(f)); " *
                      "rm -f $(_shq(f)); echo x; fi")
