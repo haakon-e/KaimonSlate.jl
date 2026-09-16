@@ -66,8 +66,8 @@ always match a `region=` tag.
 !!! note "Advanced, still settling"
     Two newer per-region knobs: an opt-in **sysimage** (a PackageCompiler image baked for the region's
     workers, for faster startup) and a **`curve`** toggle — the region's data channel is
-    CURVE-encrypted by default; turn it off only for a co-located / loopback region where encryption is
-    pure overhead.
+    CURVE-encrypted by default. Turning it off also drops the allow-list, so leave it on unless you
+    own the whole machine: a loopback port is reachable by every account on a shared host.
 
 ## Using a region in a notebook
 

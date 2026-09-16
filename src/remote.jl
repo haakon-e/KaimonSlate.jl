@@ -1344,8 +1344,12 @@ function _remote_worker_script(t::RemoteTarget, port::Int, stream_port::Int, par
     # the life of the allocation, CURVE comes with it rather than plaintext ZMQ.
     routed = via(t.ssh_host) !== nothing
     bind = (t.transport === :direct || routed) ? "0.0.0.0" : "127.0.0.1"
-    curve = t.transport === :direct || routed             # a forward that ends here IS the encryption
-    allow = curve ? "String[raw\"$client_pub\"]" : "String[]"
+    # CURVE on every transport, the forward that ends on this machine included. What it adds there
+    # is not encryption, which SSH already gives that leg, but the ZAP allow-list: loopback is no
+    # access boundary on a shared host, and a NULL socket accepts whoever opens the port. Nor does
+    # the application token cover it, since a request is deserialized before the token is checked.
+    curve = true
+    allow = "String[raw\"$client_pub\"]"
     # ONE environment: the worker runs with --project=<rproj>, which provisioning has populated with the
     # notebook's own packages PLUS KaimonGate + Revise — all resolved together. We deliberately do NOT
     # stack a separate KaimonGate env on the LOAD_PATH: that caused Revise (precompiled against its env's
@@ -1568,13 +1572,9 @@ function spawn_and_connect_remote!(k, t::RemoteTarget, parent_project::AbstractS
             tunnel = v === nothing ? open_tunnel(host, [(lport, port), (lstream, stream_port)]) :
                      open_tunnel(v.host, [(lport, port), (lstream, stream_port)]; remote = host)
             connect_host, connect_port, connect_stream = "127.0.0.1", lport, lstream
-            # An UNROUTED forward ends on the machine the worker is on, so its loopback listener is
-            # only reachable through the ssh session and SSH is the encryption. A ROUTED one ends on
-            # the LOGIN node and crosses the cluster's own network to the compute node, where the
-            # worker has to listen beyond loopback for anyone to reach it — so that hop carries
-            # CURVE instead of plaintext. The key is pinned against the local end of the forward,
-            # which is the address this hub actually dials.
-            if v !== nothing && isempty(server_key)
+            # The key is pinned against the LOCAL end of the forward, which is the address this hub
+            # actually dials. Every forward carries CURVE, routed or not — see `_remote_worker_script`.
+            if isempty(server_key)
                 for attempt in 1:12                 # the worker writes its key early in boot
                     server_key = try
                         _fetch_and_pin_curve!(t, connect_host, connect_port)
@@ -2034,7 +2034,7 @@ function preflight_remote(host::AbstractString; transport::Symbol = :tunnel, on_
         end
     else
         _pfstep!(steps, "CURVE server key", on_step) do
-            ("skip", "n/a for :tunnel — SSH provides the encryption")
+            ("skip", "generated per worker on :tunnel, pinned on first dial")
         end
     end
 

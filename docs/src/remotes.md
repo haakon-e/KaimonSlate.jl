@@ -44,6 +44,10 @@ back to local.
 
   Either way, cache and boundary-value transfers ride a dedicated **data channel** (a CURVE socket on
   `direct`, its own ssh forward on `tunnel`) so a big shipment never queues ahead of cell results.
+
+  Both transports use CURVE with an allow-list holding only this notebook's key. On `tunnel` that is
+  not for the encryption, which SSH already provides: the port the forward terminates on is open to
+  every other account on a shared host, and the allow-list is what turns them away.
 - **🩺 Test & prime** — a full reported dry-run: SSH reachability, Julia presence (+ version),
   environment provisioning, gate load, a CURVE key (for `direct`), then a real
   spawn → connect → round-trip eval → clean teardown. It returns a step-by-step checklist **and

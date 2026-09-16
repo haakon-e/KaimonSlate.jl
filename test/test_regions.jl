@@ -30,6 +30,18 @@ const RE = KaimonSlate.ReportEngine
         @test Meta.parseall(s1) isa Expr                               # the generated script is valid Julia
     end
 
+    @testset "a tunnelled worker still allow-lists its client" begin
+        # SSH encrypts the forward, but the port it terminates on is open to every account on that
+        # machine, and a NULL socket accepts whoever gets there first. CURVE is carried for the
+        # allow-list, so it belongs on the tunnel transport too.
+        s = RE._remote_worker_script(RE.RemoteTarget("h"; transport = :tunnel), 9100, 9101,
+                                     "/home/me/proj", "CLIENTPUB")
+        @test occursin("curve=true", s)
+        @test occursin("allowed_clients=String[raw\"CLIENTPUB\"]", s)
+        @test !occursin("allowed_clients=String[]", s)
+        @test Meta.parseall(s) isa Expr
+    end
+
     # The activity monitor joins two views of an off-machine worker — the per-host ssh roster and the
     # hub's own kernels — and that join is what makes a notebook run on a plain ssh host visible at all
     # (nothing else names that host). Pure JS, so it's asserted from node; skips when node is absent.

@@ -2723,13 +2723,12 @@ function _revoke_blob_client!(pubkey::AbstractString)
     end
 end
 
-# Does this worker enforce a blob allow-list? Only a CURVE gate with an allow-list (`:direct`) — the
-# same posture under which the gate itself allow-lists, so this matches the pre-split behaviour.
-_blob_enforce() = try
-    KaimonGate._ZAP_SOCKET[] !== nothing && !KaimonGate._CURVE_ALLOW_ANY[]
-catch
-    false
-end
+# Does the blob channel allow-list its clients, or accept any peer holding the server's public key?
+# Read from the environment switch KaimonGate itself reads, not from KaimonGate's internals: those
+# are not module-level names in every release, and the failed lookup answered "do not enforce".
+# Unset means enforce, so a setting this cannot read fails closed.
+_truthy(v) = lowercase(strip(String(v))) in ("1", "true", "yes", "on")
+_blob_enforce() = !_truthy(get(ENV, "KAIMON_GATE_CURVE_ALLOW_ANY", ""))
 
 const _BLOB_ZAP_DOMAIN = "kaimon-blob"
 const _BLOB_CTX = Ref{Any}(nothing)   # anchor the blob ZMQ context so GC can't finalize it mid-serve
