@@ -265,7 +265,10 @@ end
 # blob port (a 2-stride: ZMQ bind fails and the worker dies at boot; seen live). `floor` lets a caller who
 # KNOWS ports are taken (the remote roster — warm workers survive an extension restart, which resets this
 # counter) push the counter past them first.
-function _next_ports(; floor::Int = 0, reserve::Int = 2)
+# `taken` is every port already listening on the machine the worker will bind on. `_port_free`
+# probes this process's loopback, which is the wrong machine for a remote worker.
+function _next_ports(; floor::Int = 0, reserve::Int = 2, taken = nothing)
+    busy(p) = taken !== nothing && p in taken
     lock(_PORT_LOCK) do            # atomic bump — concurrent spawns must not grab the same port
         _GATE_PORT[] = max(_GATE_PORT[], floor)
         for _ in 1:_PORT_SCAN_MAX
@@ -276,7 +279,8 @@ function _next_ports(; floor::Int = 0, reserve::Int = 2)
             _GATE_PORT[] = p + reserve
             # EVERY port in the block, not just the gate: the stream port is the one whose reuse is
             # silent, so skipping the block is the whole fix.
-            all(_port_free, p:(p + reserve - 1)) && return (p, p + 1)
+            blk = p:(p + reserve - 1)
+            (!any(busy, blk) && all(_port_free, blk)) && return (p, p + 1)
         end
         error("slate: no free worker port block of $reserve in $_PORT_BASE:$_PORT_CEILING " *
               "after $_PORT_SCAN_MAX probes — are there stale workers holding ports?")

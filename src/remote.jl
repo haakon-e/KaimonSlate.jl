@@ -1668,11 +1668,13 @@ function spawn_and_connect_remote!(k, t::RemoteTarget, parent_project::AbstractS
                 # :direct region: t.port is the base_port HINT — take a FREE slot in its stride (roster-aware)
                 # so we land in the firewall-opened range, never colliding with warm workers / another notebook.
                 (let sl = _direct_port_slots(t.port, 1; roster = (try; list_remote_workers(host); catch; Any[]; end), label = "region cold-spawn on $host")
-                     isempty(sl) ? _next_ports(floor = try; _port_floor(host); catch; 0; end, reserve = 3) : sl[1]   # :direct pins blob at gate+2
+                     isempty(sl) ? _next_ports(floor = try; _port_floor(host); catch; 0; end, reserve = 3,
+                                           taken = try; busy_ports(host); catch; nothing; end) : sl[1]   # :direct pins blob at gate+2
                  end) :
             t.port != 0 ? (t.port, t.stream_port != 0 ? t.stream_port : t.port + 1) :
                           _next_ports(floor = try; _port_floor(host); catch; 0; end,
-                                      reserve = t.transport === :direct ? 3 : 2)   # :tunnel blob = worker-chosen free port
+                                      reserve = t.transport === :direct ? 3 : 2,
+                                      taken = try; busy_ports(host); catch; nothing; end)   # :tunnel blob = worker-chosen free port
         k.port = port; k.stream_port = stream_port
         _prep_stage("Starting worker process on $host")
         _launch_worker!(t, port, stream_port; label = k.label, parent = k.parent, threads = k.threads, extra_flags = k.extra_flags, region = t.region)
@@ -4049,7 +4051,8 @@ function _region_reconcile_impl!(r::Region)
             begin
                 floor = _port_floor(host; workers = roster)   # never deal a live worker's ports (see _port_floor)
                 res = r.transport === :direct ? 3 : 2
-                [_next_ports(; floor, reserve = res) for _ in 1:deficit]
+                busy = try; busy_ports(host); catch; nothing; end   # …and never another tenant's
+                [_next_ports(; floor, reserve = res, taken = busy) for _ in 1:deficit]
             end
         for (port, sp) in ports
             _launch_worker!(t, port, sp; label = "", parent = "", threads = r.threads,
@@ -4232,6 +4235,29 @@ end
 function _manifest_get(json::AbstractString, key::AbstractString)
     m = match(Regex("\"" * key * "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\""), json)
     m === nothing ? "" : replace(replace(m.captures[1], "\\\"" => "\""), "\\\\" => "\\")
+end
+
+# Every port listening on `host`, whoever owns it. `ss` on Linux, `netstat` where there is none.
+# An unreadable answer is an empty set, which leaves allocation where it was rather than refusing.
+function busy_ports(host::AbstractString)
+    isempty(host) && return Set{Int}()
+    ok, txt = try
+        _run_on(String(host), "ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null")
+    catch
+        (false, "")
+    end
+    ok ? _listen_ports(String(txt)) : Set{Int}()
+end
+
+# The local address column of `ss`/`netstat`, the only one followed by whitespace. `:` separates
+# host from port on Linux, `.` on BSD.
+function _listen_ports(txt::AbstractString)
+    out = Set{Int}()
+    for m in eachmatch(r"[:.](\d{2,5})\s", txt)
+        p = tryparse(Int, m.captures[1])
+        p === nothing || push!(out, p)
+    end
+    return out
 end
 
 # The first auto-assign port safely ABOVE everything the host's roster occupies (each worker owns

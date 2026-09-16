@@ -60,6 +60,27 @@ mkworker(port; alive = true, state = "idle", region = "testreg", hub = gethostna
         end
     end
 
+    @testset "_next_ports skips what the far host already has listening" begin
+        # `_port_free` probes THIS process's loopback, which is the wrong machine for a remote
+        # worker, and `_port_floor` only knows Slate's own roster. `taken` carries what the far host
+        # actually has listening, whoever owns it.
+        #
+        # `ss`/`netstat` write the local address as host:port on Linux and host.port on BSD; it is
+        # the only column followed by whitespace, since the peer column ends the line.
+        got = RE._listen_ports("""
+        LISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*
+        LISTEN 0      128          0.0.0.0:9100       0.0.0.0:*
+        LISTEN 0      128             [::]:9101          [::]:*
+        """)
+        @test 53 in got && 9100 in got && 9101 in got
+        @test RE._listen_ports("tcp4 0 0 *.9200 *.* LISTEN") == Set([9200])
+        @test isempty(RE._listen_ports(""))
+
+        # A block is refused if ANY port in it is taken, not only the gate port.
+        p, _ = RE._next_ports(reserve = 2)
+        @test RE._next_ports(floor = p + 2, reserve = 2, taken = Set([p + 3]))[1] > p + 3
+    end
+
     @testset "_port_floor: above every live worker's 3-port block; dead ports are free" begin
         @test RE._port_floor("h"; workers = Any[]) == 0
         ws = Any[mkworker(9100), mkworker(9106; alive = false), mkworker(9103)]
