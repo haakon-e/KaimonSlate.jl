@@ -1515,6 +1515,16 @@ end
             # writes its logs by hand and never submitted, so there is no pid file — and the
             # listing says so rather than inventing one.
             @test f["pid"] == 0
+            # Whether the job is still there, which is what tells a chunk that DIED apart from
+            # one still working: both leave `done < total` with nothing failed. This fixture wrote
+            # its logs by hand and started nothing, so nothing is running.
+            @test haskey(f, "running") && f["running"] === false
+            # The membership check a browser-supplied path must pass names the same files, and
+            # only the files: `log_stat` runs it every few seconds on a growing log, and the pids
+            # and liveness the listing goes and asks for say nothing about whether a path is ours.
+            @test Sweep.log_paths(t, r.run) == Set(String(e.path) for e in Sweep.log_files(t, r.run))
+            @test path in Sweep.log_paths(t, r.run)
+            @test_throws ErrorException Sweep.log_stat(t, r.run, "/etc/passwd")
             # `submit!` records one pid per array task, in task order — the same order that names
             # the chunks — so the listing joins them by the index already in the file's name. That
             # join is what makes a running local job reachable from `ps` or `kill`.
@@ -1599,9 +1609,41 @@ end
             @test "logs" in [a[1] for a in poll["actions"]]
             got = Sweep.handle_action(t, r.run, r.params, r.keys, "logs")
             @test any(f -> f["job"] == name, got["loglist"])
-            # …and it is a question, not a mutation: nothing about the sweep moved.
-            @test got["done"] == poll["done"] && got["state"] == poll["state"]
+            # The reply is the listing and the vocabulary to read it with, and nothing else:
+            # building the card's view first costs a plan and a manifest per shard before the
+            # listing's own round trips even start, and the viewer throws all of it away.
+            @test !haskey(got, "state") && !haskey(got, "done")
+            @test issubset(Set(keys(got)), Set(["loglist", "logsev", "logerr"]))
+            # …and it is a question, not a mutation: nothing about the sweep moved. Asked of the
+            # card's own view, since the reply no longer carries one.
+            after = Sweep.status_payload(t, r.run, r.params, r.keys; advance = false)
+            @test after["done"] == poll["done"] && after["state"] == poll["state"]
         end
+    end
+
+    @testset "every submission's files come back in one round trip" begin
+        # A sweep is reconciled, so it is normally several submissions. Listing them one at a time
+        # was a round trip to the login node each, ahead of anything the reader asked for.
+        calls = String[]
+        runner = sc -> (push!(calls, sc); (true, ""))
+        BL._remote_log_files(runner, "/r", ["slate-a", "slate-b", "slate-c"])
+        @test length(calls) == 1
+        @test all(n -> occursin("/r/logs/$(n).*.out", calls[1]), ["slate-a", "slate-b", "slate-c"])
+        # …but chunked, so the script cannot grow without bound on a sweep with very many of them.
+        empty!(calls)
+        BL._remote_log_files(runner, "/r", ["j$i" for i in 1:400])
+        @test length(calls) == 3
+        # One name still reads as one name at a call site.
+        empty!(calls)
+        BL._remote_log_files(runner, "/r", "solo")
+        @test length(calls) == 1 && occursin("/r/logs/solo.*.out", calls[1])
+
+        # A path finds its submission by name, which is what a single listing costs: the entries
+        # arrive mixed. Matched against the run's own submissions, so a stray file in the same
+        # directory is not adopted, and the trailing dot keeps one name off another's prefix.
+        @test Sweep._log_job("/r/logs/slate-ab.2.log", ["slate-a", "slate-ab"]) == "slate-ab"
+        @test Sweep._log_job("/r/logs/slate-a.2.log", ["slate-a", "slate-ab"]) == "slate-a"
+        @test Sweep._log_job("/r/logs/someone-else.1.log", ["slate-a"]) == ""
     end
 
     @testset "job output is a list of files, newest first" begin

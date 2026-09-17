@@ -2794,26 +2794,58 @@ function _chunk_facts(root::AbstractString, chunk::AbstractString)
               total = Int(get(d, "total", 0)))
 end
 
+# Just the paths. This is all a membership check needs, and it is what `log_stat` reaches for every
+# few seconds while someone reads a growing file — the listing proper also asks the far side for
+# each job's pids and for whether it is still running, neither of which says anything about whether
+# a path is one of ours.
+# Which submission wrote this file. The name is everything before the array index, and it is matched
+# against the run's own submissions rather than parsed out, so a stray file in the same directory is
+# not mistaken for one of ours.
+function _log_job(path::AbstractString, names)
+    b = basename(String(path))
+    for n in names
+        startswith(b, String(n) * ".") && return String(n)
+    end
+    return ""
+end
+
+function log_paths(t::SweepTarget, run::AbstractString)
+    l = launcher_for(t)
+    root = job_root(t)
+    names = run_jobs(t, run)
+    return Set(String(e.path)
+               for e in (try; BatchLauncher.log_files(l, root, names); catch; []; end))
+end
+
 function log_files(t::SweepTarget, run::AbstractString)
     l = launcher_for(t)
     root = job_root(t)
     store = store_root(t)
     subs = BatchSweep.known_submissions(store)
+    # Whether each submission is still going, in one poll for the whole run. Without it a chunk
+    # whose process DIED looks exactly like one still working: the status file stops part-written,
+    # so `done < total` with nothing failed, which is also what progress looks like.
+    names = run_jobs(t, run)
+    live = try; BatchLauncher.poll(l, root, names); catch; Dict{String,Symbol}(); end
+    # Every submission's files in ONE listing. A sweep is reconciled, so it is normally several
+    # submissions, and a round trip each is what opening the viewer used to cost on a cluster.
+    files = try; BatchLauncher.log_files(l, root, names); catch; []; end
+    pids = Dict(nm => (try; BatchLauncher.job_pids(l, root, nm); catch; Int[]; end) for nm in names)
     out = NamedTuple[]
-    for nm in run_jobs(t, run)
+    for e in files
+        # `<job>.<step>.<ext>`, which is how a path finds the submission that wrote it now that
+        # they are not listed one submission at a time.
+        nm = _log_job(e.path, names)
+        isempty(nm) && continue
         chunks = get(subs, nm, String[])
-        # Written in array-task order by the launcher that started them, so the same index that
-        # names a chunk names the process that ran it.
-        pids = try; BatchLauncher.job_pids(l, root, nm); catch; Int[]; end
-        for e in (try; BatchLauncher.log_files(l, root, nm); catch; []; end)
-            step = _log_step(e.path)
-            at(v) = (1 <= step <= length(v)) ? v[step] : nothing
-            chunk = something(at(chunks), "")
-            f = _chunk_facts(store, chunk)
-            push!(out, (; job = nm, e.path, e.bytes, e.modified, step, chunk,
-                          pid = something(at(pids), 0),
-                          f.node, f.ran, f.failed, f.done, f.total))
-        end
+        step = _log_step(e.path)
+        at(v) = (1 <= step <= length(v)) ? v[step] : nothing
+        chunk = something(at(chunks), "")
+        f = _chunk_facts(store, chunk)
+        push!(out, (; job = nm, e.path, e.bytes, e.modified, step, chunk,
+                      pid = something(at(get(pids, nm, Int[])), 0),
+                      running = get(live, nm, :unknown) === :running,
+                      f.node, f.ran, f.failed, f.done, f.total))
     end
     sort!(out; by = e -> (-e.modified, e.path))
     return out
@@ -2838,7 +2870,7 @@ log_tail(r::ShardedResult, path::AbstractString; kw...) =
 # security boundary, not a nicety: the path is about to be interpolated into a command on a login
 # node, so anything the listing did not name is refused rather than quoted and hoped for.
 function _known_log(t::SweepTarget, run::AbstractString, path::AbstractString)
-    String(path) in Set(String(e.path) for e in log_files(t, run)) ||
+    String(path) in log_paths(t, run) ||
         error("no such log for this sweep: $(path)")
     return String(path)
 end
@@ -2888,7 +2920,7 @@ log_search(t::SweepTarget, run::AbstractString, path::AbstractString, pattern::A
 
 function log_tail(t::SweepTarget, run::AbstractString, path::AbstractString;
                   lines::Integer = LOG_TAIL_LINES)
-    known = Set(String(e.path) for e in log_files(t, run))
+    known = log_paths(t, run)
     String(path) in known ||
         error("no such log for this sweep: $(path)")
     txt = BatchLauncher.log_tail(launcher_for(t), String(path); lines = Int(lines))
@@ -2963,7 +2995,10 @@ _opt_span(opts, key::Symbol, default::Int, cap::Int) =
 function handle_action(target::SweepTarget, run::AbstractString, params, keys,
                        action::AbstractString; plot = nothing, notify = nothing,
                        landed = nothing, arg::AbstractString = "", opts = (;))
-    sync_in!(target)
+    # `sync_in!` brings the store's metadata across, a transfer that grows with the sweep. The three
+    # reads below want a FILE on the cluster and nothing out of the store, and `log_stat` is polled
+    # every few seconds for as long as someone watches a log grow — so they do not pay for it.
+    action in ("log_stat", "log_slice", "log_search") || sync_in!(target)
     root = store_root(target)
     l = launcher_for(target)
     # Not a mutation: the card reporting, once, that the work is over. A sweep finishes minutes or
@@ -2988,7 +3023,10 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
     # the whole of it, neither of which a panel rendered here could do — the file can be larger than
     # anything worth sending, and a rendered tail is the one part of it the reader already saw.
     if action == "logs"
-        out = status_payload(target, run, params, keys; plot, advance = false)
+        # Not a status payload. The viewer wants the listing and the vocabulary to read it with,
+        # and building the card's view first means a plan and a manifest per shard before any of
+        # that starts — on a cluster, ahead of the round trips the listing itself costs.
+        out = Dict{String,Any}()
         try
             out["loglist"] = [Dict{String,Any}("path" => String(f.path),
                                                "name" => basename(String(f.path)),
@@ -2996,6 +3034,7 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
                                                "bytes" => Int(f.bytes),
                                                "modified" => Int(f.modified),
                                                "step" => f.step, "chunk" => f.chunk, "pid" => f.pid,
+                                               "running" => f.running,
                                                "node" => f.node, "ran" => f.ran,
                                                "failed" => f.failed, "done" => f.done,
                                                "total" => f.total)

@@ -117,6 +117,8 @@ however the shell expanded a glob. With the files named, a reader can take the m
 pay for that one only. `modified` is unix time, `0` when the backend could not report it.
 """
 function log_files end
+# One submission reads better at a call site than a one-element list; the work is the same.
+log_files(l, root::AbstractString, name::AbstractString) = log_files(l, root, [String(name)])
 
 """
     log_tail(launcher, path; lines) -> String
@@ -498,14 +500,15 @@ function _exec_cancel_there(l::ExecLauncher, root, names)
     return ok ? count(==("x"), [strip(s) for s in eachsplit(String(txt), '\n'; keepempty = false)]) : 0
 end
 
-function log_files(l::ExecLauncher, root::AbstractString, name::AbstractString)
+function log_files(l::ExecLauncher, root::AbstractString, names::AbstractVector)
     # `.log` here, not the scheduler's `.out`: this launcher names its own files.
-    _remote(l) && return _remote_log_files((sc) -> _there(l, sc), root, name; ext = "log")
+    _remote(l) && return _remote_log_files((sc) -> _there(l, sc), root, names; ext = "log")
     dir = joinpath(String(root), "logs")
     isdir(dir) || return NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
+    want = Set(String(n) * "." for n in names)
     out = NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
     for f in readdir(dir; join = true)
-        startswith(basename(f), String(name) * ".") || continue
+        any(p -> startswith(basename(f), p), want) || continue
         isfile(f) || continue
         push!(out, (; path = f, bytes = Int(filesize(f)),
                       modified = try; round(Int, mtime(f)); catch; 0; end))
@@ -877,12 +880,25 @@ end
 
 # Both schedulers list and tail identically: the files are on a filesystem reached through the same
 # session, and which scheduler wrote them does not change how they are read.
-_remote_log_files(runner, root, name; ext::AbstractString = "out") = begin
-    glob = "$(joinpath(String(root), "logs"))/$(name).*.$(ext)"
-    ok, txt = runner(replace(_STAT_LINE, "%GLOB%" => glob) * " 2>/dev/null")
-    ok ? _parse_log_listing(txt) :
-         NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
+# Every named submission in ONE round trip. A sweep is reconciled, so it is normally several
+# submissions, and asking per name made opening the viewer cost a login-node round trip each. The
+# globs are listed rather than the whole directory: a store holds every run the sweep ever made,
+# and listing all of that to throw most of it away is the other way to be slow.
+_remote_log_files(runner, root, names::AbstractVector; ext::AbstractString = "out") = begin
+    out = NamedTuple{(:path, :bytes, :modified),Tuple{String,Int,Int}}[]
+    isempty(names) && return out
+    dir = joinpath(String(root), "logs")
+    # Chunked, so the script cannot grow without bound on a sweep with very many submissions.
+    for part in Iterators.partition(names, 150)
+        glob = join(("$(dir)/$(n).*.$(ext)" for n in part), " ")
+        ok, txt = runner(replace(_STAT_LINE, "%GLOB%" => glob) * " 2>/dev/null")
+        ok && append!(out, _parse_log_listing(txt))
+    end
+    sort!(out; by = e -> (-e.modified, e.path))
+    return out
 end
+_remote_log_files(runner, root, name; ext::AbstractString = "out") =
+    _remote_log_files(runner, root, [name]; ext)
 _remote_log_tail(runner, path, lines) = begin
     ok, txt = runner("tail -n $(Int(lines)) " * _shq(String(path)) * " 2>/dev/null")
     ok ? txt : ""
@@ -958,8 +974,8 @@ function _remote_log_search(runner, path, pattern, ignorecase, regex, limit)
     return (; total, hits, capped = total > length(hits))
 end
 
-log_files(l::SlurmLauncher, root::AbstractString, name::AbstractString) =
-    _remote_log_files(sc -> _ssh(l, sc), root, name)
+log_files(l::SlurmLauncher, root::AbstractString, names::AbstractVector) =
+    _remote_log_files(sc -> _ssh(l, sc), root, names)
 log_tail(l::SlurmLauncher, path::AbstractString; lines::Int = 500) =
     _remote_log_tail(sc -> _ssh(l, sc), path, lines)
 log_stat(l::SlurmLauncher, path::AbstractString) = _remote_log_stat(sc -> _ssh(l, sc), path)
@@ -1320,8 +1336,8 @@ function logs(l::PbsLauncher, root::AbstractString, name::AbstractString; lines:
     return ok ? txt : ""
 end
 
-log_files(l::PbsLauncher, root::AbstractString, name::AbstractString) =
-    _remote_log_files(sc -> _ssh(l, sc), root, name)
+log_files(l::PbsLauncher, root::AbstractString, names::AbstractVector) =
+    _remote_log_files(sc -> _ssh(l, sc), root, names)
 log_tail(l::PbsLauncher, path::AbstractString; lines::Int = 500) =
     _remote_log_tail(sc -> _ssh(l, sc), path, lines)
 log_stat(l::PbsLauncher, path::AbstractString) = _remote_log_stat(sc -> _ssh(l, sc), path)
