@@ -8,6 +8,32 @@ using KaimonSlate
 import JSON
 const NS = KaimonSlate.NotebookServer
 
+@testset "a pending browser round-trip is answerable only by its own page" begin
+    # `request_live` asks the open tab to do something and blocks on a channel until the tab POSTs
+    # back. The id used to be a counter in hex — `1`, `2`, `3` — looked up in a map shared by every
+    # notebook on the hub, with the route resolving a notebook it never checked. So anything that
+    # could reach the port could answer another page's question: what `slate.eval_js` hands an
+    # agent, or the figure a PDF export is waiting for.
+    ids = [NS._live_reqid() for _ in 1:200]
+    @test length(Set(ids)) == 200                       # unique, as a counter also was
+    @test all(id -> length(id) >= 24 && occursin('-', id), ids)
+    # …and not derivable from one another, which a counter is: `2` follows `1`.
+    @test !any(i -> ids[i] == replace(ids[i + 1], r"^[0-9a-f]+-" => string(i, base = 16) * "-"),
+               1:length(ids) - 1)
+
+    ch = Channel{Any}(1)
+    lock(NS._LIVE_LOCK) do; NS._LIVE_PENDING["rq-1"] = ("nbA", ch); end
+    try
+        @test NS.deliver_live!("nbB", "rq-1", Dict("x" => 1)) === false   # another page: refused
+        @test !isready(ch)
+        @test NS.deliver_live!("nbA", "rq-1", Dict("x" => 1)) === true    # the page that asked
+        @test isready(ch) && take!(ch)["x"] == 1
+        @test NS.deliver_live!("nbA", "rq-nope", Dict()) === false        # no such request
+    finally
+        lock(NS._LIVE_LOCK) do; delete!(NS._LIVE_PENDING, "rq-1"); end
+    end
+end
+
 @testset "an app reader cannot command a sweep" begin
     # The route allowlist stops at the WebSocket upgrade. Every `slateCall` after it rides that one
     # socket, so a channel is reachable in app mode unless something else says otherwise — and the

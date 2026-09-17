@@ -2951,7 +2951,7 @@ function _make_router(h::Hub)
         isempty(reqid) && return _json(Dict("ok" => false))
         cell = String(get(b, "cell", "")); png = String(get(b, "png", ""))   # raster → snapshot store (slate.view)
         (isempty(cell) || isempty(png)) || (try; set_snapshot!(nb.id, cell, Vector{UInt8}(Base64.base64decode(png))); catch; end)
-        _json(Dict("ok" => deliver_live!(reqid, b)))
+        _json(Dict("ok" => deliver_live!(nb.id, reqid, b)))
     end))
     # PDF export: the open tab POSTs one mounted component's figure (SVG, or a base64 PNG) in answer
     # to a `compfig:` SSE request (assets/js/inspect.js `_slateComponentFig`), routed back to the
@@ -2960,14 +2960,14 @@ function _make_router(h::Hub)
     HTTP.register!(router, "POST", "/api/{id}/compfig-result", req -> _withnb(h, req, nb -> begin
         b = _body(req); reqid = String(get(b, "reqid", ""))
         isempty(reqid) && return _json(Dict("ok" => false))
-        _json(Dict("ok" => deliver_live!(reqid, b)))
+        _json(Dict("ok" => deliver_live!(nb.id, reqid, b)))
     end))
     # slate.eval_js: the open tab POSTs the result of running agent-supplied JS (assets/js/inspect.js
     # `_slateEvalJs`), in answer to a `js:` SSE request, routed back to the waiting eval call.
     HTTP.register!(router, "POST", "/api/{id}/eval-result", req -> _withnb(h, req, nb -> begin
         b = _body(req); reqid = String(get(b, "reqid", ""))
         isempty(reqid) && return _json(Dict("ok" => false))
-        _json(Dict("ok" => deliver_live!(reqid, b)))
+        _json(Dict("ok" => deliver_live!(nb.id, reqid, b)))
     end))
     # Browser diagnostics push (console errors / failed requests / unhandled rejections) →
     # read back by the slate.diag MCP tool. See assets/js/diag.js.

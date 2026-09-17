@@ -3,6 +3,14 @@
 # uses ReTest's LAZY `@testset` — so a subset can be run by pattern:
 #   run_tests(pattern="parsched")                       # via Kaimon
 #   julia --project -e 'using Pkg; Pkg.test(test_args=["parsched"])'
+# The suite's OWN config home, set before anything reads one.
+#
+# `region_set!`, `clusters.json` and the rest resolve through `KAIMONSLATE_CONFIG_HOME` and fall
+# back to the developer's `~/.config/kaimonslate`. Without this a test that invents a region leaves
+# it in the real Remotes list, and the NEXT run reads it back and acts on it — which is how a suite
+# comes to open an ssh connection nobody asked for, against a host a previous run made up.
+ENV["KAIMONSLATE_CONFIG_HOME"] = mktempdir(; cleanup = true)
+
 using ReTest
 
 module Defname;   include("test_defname.jl");   end

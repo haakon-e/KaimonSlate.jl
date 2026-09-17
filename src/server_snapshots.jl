@@ -169,14 +169,24 @@ end
 # Two callers ride this: `slate.inspect` (capture a cell's rendered DOM + console + raster, so an agent
 # can SEE what rendered) and `slate.eval_js` (run arbitrary JS in the page and return its result). No
 # open tab → `nothing` (the caller degrades gracefully — never hangs).
-const _LIVE_PENDING = Dict{String,Channel{Any}}()
+# A pending request is keyed by an id that must be UNGUESSABLE, and it is bound to the notebook that
+# asked. It used to be a counter in hex — `1`, `2`, `3` — in a map shared by every notebook the hub
+# serves, and the POST route resolved a notebook without checking the request belonged to it. So
+# anything that could reach the port could answer somebody else's pending question: an agent's
+# `slate.eval_js` reply, or a figure a PDF export was waiting on, replaced with whatever it sent.
+# The counter stays for readability in a log; the random half is what makes the id a secret.
+const _LIVE_PENDING = Dict{String,Tuple{String,Channel{Any}}}()
 const _LIVE_LOCK = ReentrantLock()
 const _LIVE_SEQ = Threads.Atomic{Int}(0)
-_live_reqid() = string(Threads.atomic_add!(_LIVE_SEQ, 1); base = 16)
+_live_reqid() = string(Threads.atomic_add!(_LIVE_SEQ, 1); base = 16) * "-" * bytes2hex(rand(UInt8, 12))
 
-# The POST handler hands the browser's reply to the waiting request. Returns whether a waiter existed.
-function deliver_live!(reqid::AbstractString, payload)
-    ch = lock(_LIVE_LOCK) do; get(_LIVE_PENDING, String(reqid), nothing); end
+# The POST handler hands the browser's reply to the waiting request. Returns whether a waiter existed
+# — and `nbid` has to be the notebook that asked, or this is somebody answering for another page.
+function deliver_live!(nbid::AbstractString, reqid::AbstractString, payload)
+    ch = lock(_LIVE_LOCK) do
+        e = get(_LIVE_PENDING, String(reqid), nothing)
+        (e === nothing || e[1] != String(nbid)) ? nothing : e[2]
+    end
     ch === nothing && return false
     try; put!(ch, payload); catch; end
     return true
@@ -190,7 +200,7 @@ function request_live(nb::LiveNotebook, event::AbstractString, fields::AbstractD
     any_listener || return nothing
     reqid = _live_reqid()
     ch = Channel{Any}(1)
-    lock(_LIVE_LOCK) do; _LIVE_PENDING[reqid] = ch; end
+    lock(_LIVE_LOCK) do; _LIVE_PENDING[reqid] = (nb.id, ch); end
     # Wake the take! when the browser is silent — but DON'T close if a reply is already buffered
     # (`isready`), or a reply landing right at the deadline would be discarded → caller sees nothing.
     timer = Timer(_ -> (isopen(ch) && !isready(ch) && close(ch)), timeout)
