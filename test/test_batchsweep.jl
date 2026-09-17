@@ -1642,6 +1642,21 @@ end
             @test Sweep._log_severity("ERROR: LoadError: no method matching") === :bad
             # …and the sources are the ones Julia itself matches with, not a restatement.
             @test Regex(sev["error"][1], "i") == Sweep._LOG_BAD
+
+            # The chips count over the file as it is ON DISK, with the logger's colour codes still
+            # in it, because that pass runs in ripgrep rather than here. `\e[1mWarning` has no word
+            # boundary before the `W` — the `m` closing the escape is a word character — so a
+            # pattern that only anchors on `\b` counts nothing and the chip reads 0.
+            colour = "\e[33m\e[1m┌ \e[22m\e[39m\e[33m\e[1mWarning 18:16:38.318: \e[22m\e[39mslow read"
+            @test occursin(Regex(sev["warn"][1], "i"), colour)
+            @test occursin(Regex(sev["declared"]), colour)
+            @test match(Regex(sev["declared"]), colour).captures[1] == "Warning"
+            bad = "\e[31m\e[1m┌ \e[22m\e[39m\e[31m\e[1mError 18:16:38.318: \e[22m\e[39mit died"
+            @test occursin(Regex(sev["error"][1], "i"), bad)
+            # Uncoloured output still reads the same, and a healthy count still does not match.
+            @test occursin(Regex(sev["warn"][1], "i"), "Warning: plain")
+            @test match(Regex(sev["declared"]), "┌ Error 1: x").captures[1] == "Error"
+            @test !occursin(Regex(sev["error"][2], "i"), "0 failed, all good")
         end
     end
 

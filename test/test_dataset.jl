@@ -1025,10 +1025,12 @@ const MS = RE.MemoStore
                   "no escapes at all 123")
             @test RE.Sweep._uncolour(s) == RE.strip_ansi(s)
         end
-        # …and the point of it: a level is unreadable until the colour is off.
+        # …and the level reads the same with the colour on or off. Stripping stays because it is
+        # cheaper and exact here; the pattern has to manage without it because the chip counts run
+        # in ripgrep, over the file as written.
         red = "\e[31m\e[1m┌ \e[22m\e[39m\e[31m\e[1mError 14:22:31.004: \e[22m\e[39mit died"
         @test RE.Sweep._log_severity(red) === :bad
-        @test RE.Sweep._declared_level(red) === nothing          # not before stripping
+        @test RE.Sweep._declared_level(red) === :bad
         @test RE.Sweep._declared_level(RE.Sweep._uncolour(red)) === :bad
     end
 end

@@ -408,21 +408,32 @@
     for (const t of text.split('\n')) {
       const own = sevOf(t);
       // A continuation keeps the section's level unless it names a worse one of its own.
-      const sev = (CONT.test(t) || t === '') && own === 'info' ? run : own;
-      if (!CONT.test(t) && t !== '') run = sev;
-      out.push({ t, o: off, sev });
+      const head = !CONT.test(t) && t !== '';    // starts a message; the renderer spaces on it
+      const sev = head ? own : (own === 'info' ? run : own);
+      if (head) run = sev;
+      out.push({ t, o: off, sev, head });
       off += blen(t) + 1;                    // +1 for the newline the split consumed
     }
     return out;
   }
 
-  // The lines on screen, in reading order. Reversal is per LINE in newest-first mode, which is what
-  // puts the last thing the job said at the top.
+  // Newest-first reverses RECORDS, not lines. A log record is a `┌` line plus the `│` fields and
+  // `└` suffix under it, and flipping those individually puts the suffix above the fields and the
+  // fields in the wrong order — the record is one thing to read, whichever end you start from.
+  // A record whose head is on the page above starts a group of its own here.
+  function byRecord(lines) {
+    const groups = [];
+    for (const l of lines) {
+      if (l.head || !groups.length) groups.push([l]); else groups[groups.length - 1].push(l);
+    }
+    return [].concat(...groups.reverse());
+  }
+
   function visible() {
     const out = [];
     const ps = S.order === 'new' ? S.pages.slice().reverse() : S.pages;
     for (const p of ps) {
-      const ls = S.order === 'new' ? p.lines.slice().reverse() : p.lines;
+      const ls = S.order === 'new' ? byRecord(p.lines) : p.lines;
       for (const l of ls) {
         if (S.filter !== 'all' && l.sev !== S.filter) continue;
         out.push(l);
@@ -436,9 +447,12 @@
     if (!S.path) { pre.innerHTML = ''; return; }
     const mark = S.hits && S.needle && !S.rx ? S.needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
     const at = S.hits && S.hitAt >= 0 ? S.hits[S.hitAt].offset : -1;
+    // No separator between the spans: each is a block and already takes its own line, and a `\n`
+    // inside `white-space:pre-wrap` would add a second one. Gaps go BETWEEN messages instead, via
+    // the head class — the `│` continuations under a `┌` belong to it and read as one block.
     pre.innerHTML = visible().map(l =>
-      `<span class="logv-l logv-${l.sev}${l.o === at ? ' hit' : ''}" data-o="${l.o}">${paintLine(l.t, mark)}</span>`
-    ).join('\n');
+      `<span class="logv-l logv-${l.sev}${l.head ? ' logv-head-l' : ''}${l.o === at ? ' hit' : ''}" data-o="${l.o}">${paintLine(l.t, mark)}</span>`
+    ).join('');
   }
 
   function paintBar() {

@@ -40,11 +40,14 @@ const eq = (got, want, what) => {
 // The severity vocabulary is SERVED (Julia's `_LOG_BAD_SRC` and friends), so the viewer classifies
 // nothing until it arrives — a second vocabulary written here is the drift this avoids. These are
 // the sources Julia sends.
+// An escape sequence is accepted wherever a word boundary is, because the chip counts run in
+// ripgrep over the raw file where `\e[1mWarning` has no boundary before the `W`.
+const SGR = '\\x1b\\[[0-9;]*m', B = '(?:' + SGR + '|\\b)';
 setSev({
-  declared: '^\\s*[┌\\[]\\s*(Error|Warning|Info|Debug)\\b',
-  error: ['\\b(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\\b',
-          '\\b[1-9][0-9]*\\s+(failed|failures?|errors?)\\b'],
-  warn: ['\\b(warn|warning|deprecat)'],
+  declared: '^(?:' + SGR + '|\\s)*[┌\\[](?:' + SGR + '|\\s)*(Error|Warning|Info|Debug)\\b',
+  error: [B + '(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\\b',
+          B + '[1-9][0-9]*\\s+(failed|failures?|errors?)\\b'],
+  warn: [B + '(warn|warning|deprecat)'],
 });
 
 eq(sevOf('ERROR: LoadError'), 'error', 'an error line');
@@ -81,6 +84,23 @@ S.order = 'new';
 eq(visible().map(l => l.t), ['four', 'three', 'two', 'one'], 'newest first');
 // …and the offsets travel with the lines rather than being re-derived from their new position.
 eq(visible().map(l => l.o), [18, 12, 4, 0], 'offsets survive the reversal');
+
+// A Julia log record is several lines and reads in one direction only. Newest-first puts the
+// newest RECORD at the top with its own lines still in order; reversing line by line used to put
+// the `└` suffix above the `│` fields and the fields backwards.
+const recs = '┌ Info: one\n│   a = 1\n│   b = 2\n└ @ Mod f:1\n┌ Info: two\n│   c = 3\n└ @ Mod f:2';
+S.pages = [{ from: 0, to: 200, lines: cut(recs, 0) }];
+S.filter = 'all';
+S.order = 'new';
+eq(visible().map(l => l.t),
+   ['┌ Info: two', '│   c = 3', '└ @ Mod f:2',
+    '┌ Info: one', '│   a = 1', '│   b = 2', '└ @ Mod f:1'],
+   'newest record first, each record still in reading order');
+S.order = 'old';
+eq(visible().map(l => l.t), recs.split('\n'), 'oldest first is the file as written');
+// The head flag is what the renderer spaces on, so only a record's first line carries it.
+eq(cut(recs, 0).map(l => l.head), [true, false, false, false, true, false, false],
+   'only a record head is a head');
 
 // ── The level filter ────────────────────────────────────────────────────────────────────────
 S.pages = [{ from: 0, to: 99, lines: cut('starting up\nWarning: slow\nERROR: died\nbye', 0) }];

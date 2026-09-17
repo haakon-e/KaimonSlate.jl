@@ -3253,8 +3253,12 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
    readable, and a log line can be arbitrarily long. */
 .logv-pane { flex:1 1 auto; overflow:auto; min-height:0; background:var(--bg); }
 .logv-pre { margin:0; padding:8px 12px; font-family:'Cascadia Code',ui-monospace,monospace;
-  font-size:.72rem; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+  font-size:.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; }
 .logv-l { display:block; }
+/* A Julia log record is a `┌` line plus its `│` fields and a `└` suffix. Keep those tight and put
+   the air between records, so the shape of one message is visible at a glance. */
+.logv-l.logv-head-l { margin-top:.55em; }
+.logv-l.logv-head-l:first-child { margin-top:0; }
 .logv-info { color:var(--text); opacity:.72; }
 /* A line carrying its own SGR colour is rendered by ansi.js into .ansi-* spans, which
    already carry a colour — the level's own colour must not win over it. */

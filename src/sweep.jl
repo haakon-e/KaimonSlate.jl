@@ -3555,15 +3555,22 @@ end
 # lines on screen, and ripgrep counts them over a whole file. The syntax is the intersection of all
 # three — no inline `(?i)`, which JavaScript has no notion of, so the fold is a flag on each side;
 # and no look-around, which Rust's engine does not implement at all and silently never matches.
-const _LOG_BAD_SRC = raw"\b(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\b"
+# Two of the three engines see the line with its colour codes still on it. Julia and JavaScript
+# strip first; ripgrep scans the file as it is, and there a word boundary is not where it looks.
+# `\e[1mWarning` has no boundary before the `W`, because the `m` that ends the escape is a word
+# character. So an escape sequence is accepted ANYWHERE a boundary is, in every pattern below.
+const _ANSI_SGR_SRC = raw"\x1b\[[0-9;]*m"
+const _ANSI_B = "(?:" * _ANSI_SGR_SRC * raw"|\b)"
+const _LOG_BAD_SRC = _ANSI_B * raw"(error|fatal|traceback|exception|segmentation fault|killed|oom|out of memory|exceeded|abort(ed)?)\b"
 # …so a count of failures is matched by its NUMBER instead, and only a non-zero one.
-const _LOG_BAD_COUNT_SRC = raw"\b[1-9][0-9]*\s+(failed|failures?|errors?)\b"
-const _LOG_WARN_SRC = raw"\b(warn|warning|deprecat)"
+const _LOG_BAD_COUNT_SRC = _ANSI_B * raw"[1-9][0-9]*\s+(failed|failures?|errors?)\b"
+const _LOG_WARN_SRC = _ANSI_B * raw"(warn|warning|deprecat)"
 # A line that NAMES its level is believed, and nothing else is consulted. `@info "0 errors so far"`
 # contains the word `error` and is not one; the patterns above are for output that declares nothing
 # — a bare `println`, a C library, a scheduler's own messages. This is the shape Julia's logger
 # writes, which is what the task runner installs and what a sweep body is meant to use.
-const _LOG_LEVEL_SRC = raw"^\s*[┌\[]\s*(Error|Warning|Info|Debug)\b"
+const _LOG_LEVEL_SRC = "^(?:" * _ANSI_SGR_SRC * raw"|\s)*[┌\[](?:" * _ANSI_SGR_SRC *
+                       raw"|\s)*(Error|Warning|Info|Debug)\b"
 const _LOG_LEVEL = Regex(_LOG_LEVEL_SRC)
 const _LOG_BAD = Regex(_LOG_BAD_SRC, "i")
 const _LOG_BAD_COUNT = Regex(_LOG_BAD_COUNT_SRC, "i")
@@ -3573,10 +3580,9 @@ _declared_level(line) = (m = match(_LOG_LEVEL, line); m === nothing ? nothing :
                          m.captures[1] == "Error" ? :bad :
                          m.captures[1] == "Warning" ? :warn : :plain)
 
-# The logger colours its own box characters, so the escape codes arrive BEFORE the `┌` and a
-# pattern anchored at the start of the line never sees it. Nor does the fallback rescue it: in
-# `\e[1mError` the `m` of the escape code is a word character, so `\berror\b` does not match either.
-# Taken off first, which is also what the viewer does (`slateAnsiText`).
+# Colour off first, which is also what the viewer does (`slateAnsiText`). The patterns above cope
+# with escape codes on their own, because ripgrep has to; here the line is already in hand, and
+# stripping is cheaper and exact.
 #
 # Spelled out here rather than reached for in the parent module: this file is included into a BARE
 # module on purpose — that is how the worker builds it — and a parent that happens to carry
