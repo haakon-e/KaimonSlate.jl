@@ -38,6 +38,27 @@
     const build = a => (a || []).map(src => { try { return new RegExp(src, 'i'); } catch (e) { return null; } })
                                 .filter(Boolean);
     SEV = { declared: one(spec.declared), error: build(spec.error), warn: build(spec.warn) };
+    // The record grammar, served alongside. Absent (an older hub) leaves REC null and every line
+    // renders the way it always did, which is the plain text of the file.
+    REC = spec.head ? { head: one(spec.head), field: one(spec.field), fcont: one(spec.fcont),
+                        mcont: one(spec.mcont), tail: one(spec.tail) } : null;
+  }
+  let REC = null;
+
+  // What part of a record this line is, with the pieces already pulled out. Read with the colour
+  // off: the level decides how the record is painted, so the logger's own codes on the box glyphs
+  // and the level word are noise here. A field's VALUE keeps its colour, since a stacktrace under
+  // `exception =` is coloured by Julia and worth keeping.
+  function roleOf(t) {
+    if (!REC) return null;
+    const p = t.indexOf('\x1b') < 0 ? t : window.slateAnsiText(t);
+    let m;
+    if ((m = REC.head.exec(p))) return { role: 'head', lvl: m[1], ts: m[2] || '', msg: m[3] || '' };
+    if ((m = REC.field.exec(p))) return { role: 'field', key: m[1], val: m[2] || '' };
+    if ((m = REC.fcont.exec(p))) return { role: 'fcont' };
+    if ((m = REC.mcont.exec(p))) return { role: 'mcont', msg: m[1] };
+    if ((m = REC.tail.exec(p))) return { role: 'tail', at: m[1] };
+    return null;
   }
   const LVL = { Error: 'error', Warning: 'warn', Info: 'info', Debug: 'info' };
   // A line that NAMES its level is believed and nothing else is consulted: `@info "0 errors so far"`
@@ -408,10 +429,12 @@
     for (const t of text.split('\n')) {
       const own = sevOf(t);
       // A continuation keeps the section's level unless it names a worse one of its own.
-      const head = !CONT.test(t) && t !== '';    // starts a message; the renderer spaces on it
+      const r = roleOf(t);
+      // A record's head starts one; so does any line that is not a continuation of anything.
+      const head = r ? r.role === 'head' : (!CONT.test(t) && t !== '');
       const sev = head ? own : (own === 'info' ? run : own);
       if (head) run = sev;
-      out.push({ t, o: off, sev, head });
+      out.push({ t, o: off, sev, head, r });
       off += blen(t) + 1;                    // +1 for the newline the split consumed
     }
     return out;
@@ -450,9 +473,72 @@
     // No separator between the spans: each is a block and already takes its own line, and a `\n`
     // inside `white-space:pre-wrap` would add a second one. Gaps go BETWEEN messages instead, via
     // the head class — the `│` continuations under a `┌` belong to it and read as one block.
-    pre.innerHTML = visible().map(l =>
-      `<span class="logv-l logv-${l.sev}${l.head ? ' logv-head-l' : ''}${l.o === at ? ' hit' : ''}" data-o="${l.o}">${paintLine(l.t, mark)}</span>`
-    ).join('');
+    const ls = visible();
+    let html = '', i = 0;
+    while (i < ls.length) {
+      if (ls[i].r && ls[i].r.role === 'head') {
+        let j = i + 1;
+        while (j < ls.length && ls[j].r && ls[j].r.role !== 'head') j++;
+        html += recordHtml(ls.slice(i, j), mark, at);
+        i = j;
+      } else {
+        html += lineHtml(ls[i], mark, at); i++;
+      }
+    }
+    pre.innerHTML = html;
+  }
+
+  const hitCls = (l, at) => l.o === at ? ' hit' : '';
+  const lineHtml = (l, mark, at) =>
+    `<span class="logv-l logv-${l.sev}${l.head ? ' logv-head-l' : ''}${hitCls(l, at)}" ` +
+    `data-o="${l.o}">${paintLine(l.t, mark)}</span>`;
+
+  // One record as a record: the level, the clock and the message on one line, then its fields
+  // flowing inline under it. Fields flow because most of them are a short name and a number, and
+  // one per line was most of the height of the pane for none of the information. A value that runs
+  // long, or that has continuation lines under it (an exception and its stacktrace), takes a block
+  // of its own instead — flowing that would be unreadable.
+  //
+  // `data-o` stays on the element carrying each SOURCE line, so a search hit still scrolls to the
+  // right place: the byte offsets are what the server reports matches at, and the grouping here is
+  // presentation on top of them.
+  function recordHtml(lines, mark, at) {
+    const h = lines[0], r = h.r;
+    const mk = s => {
+      let x = esc(s);
+      if (mark) { try { x = x.replace(new RegExp('(' + mark + ')', 'gi'), '<mark>$1</mark>'); } catch (e) {} }
+      return x;
+    };
+    const lvl = (r.lvl || '').toUpperCase().slice(0, 5);
+    let msg = mk(r.msg);
+    let out = '', tail = '', fields = '', anyHit = lines.some(l => l.o === at);
+    for (let k = 1; k < lines.length; k++) {
+      const l = lines[k], lr = l.r;
+      if (!lr) continue;
+      if (lr.role === 'mcont') { msg += '<br>' + mk(lr.msg); continue; }
+      if (lr.role === 'tail') { tail = esc(lr.at); continue; }
+      if (lr.role === 'field') {
+        // Continuations belong to the field above them, and force it onto its own block.
+        const cont = [];
+        while (k + 1 < lines.length && lines[k + 1].r && lines[k + 1].r.role === 'fcont') {
+          cont.push(lines[++k]);
+        }
+        const wide = cont.length > 0 || lr.val.length > 48;
+        const body = cont.length
+          ? cont.map(c => `<span class="logv-l${hitCls(c, at)}" data-o="${c.o}">` +
+                          `${paintLine(c.t.replace(/^(?:\x1b\[[0-9;]*m)*│ ?/, ''), mark)}</span>`).join('')
+          : '';
+        fields += `<span class="logv-f${wide ? ' wide' : ''} logv-l${hitCls(l, at)}" data-o="${l.o}">` +
+                  `<i>${esc(lr.key)}</i>${lr.val ? mk(lr.val) : ''}${body}</span>`;
+      }
+    }
+    out = `<span class="logv-l logv-rh${hitCls(h, at)}" data-o="${h.o}">` +
+          `<b class="logv-lvl">${esc(lvl)}</b>` +
+          (r.ts ? `<span class="logv-ts">${esc(r.ts)}</span>` : '') +
+          `<span class="logv-msg">${msg}</span></span>`;
+    if (fields) out += `<span class="logv-fs">${fields}</span>`;
+    return `<div class="logv-rec logv-${h.sev}${anyHit ? ' rechit' : ''}"` +
+           (tail ? ` title="${tail}"` : '') + `>${out}</div>`;
   }
 
   function paintBar() {
@@ -583,5 +669,5 @@
   // The addressing is the part that has to be right and the part a browser cannot show you is
   // wrong: an off-by-one in a byte offset looks like a highlight on the neighbouring line. Exposed
   // so `test/js/logview_window.mjs` can pin it without a DOM.
-  window.slateLogs = { open, close, _test: { S, cut, visible, sevOf, setSev, paintLine } };
+  window.slateLogs = { open, close, _test: { S, cut, visible, sevOf, setSev, paintLine, roleOf, recordHtml } };
 })();

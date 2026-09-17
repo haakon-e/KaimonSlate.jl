@@ -30,8 +30,9 @@ try { (0, eval)(src); LV = globalThis.slateLogs; } catch (e) {
 }
 if (!LV || !LV._test) { console.error('logview: logview.js exposed no test surface'); process.exit(2); }
 
-const { S, cut, visible, sevOf, setSev, paintLine } = LV._test;
+const { S, cut, visible, sevOf, setSev, paintLine, recordHtml } = LV._test;
 const fails = [];
+const ok = (cond, what) => { if (!cond) fails.push(what); };
 const eq = (got, want, what) => {
   const a = JSON.stringify(got), b = JSON.stringify(want);
   if (a !== b) fails.push(`${what}: got ${a}, want ${b}`);
@@ -101,6 +102,55 @@ eq(visible().map(l => l.t), recs.split('\n'), 'oldest first is the file as writt
 // The head flag is what the renderer spaces on, so only a record's first line carries it.
 eq(cut(recs, 0).map(l => l.head), [true, false, false, false, true, false, false],
    'only a record head is a head');
+
+// ── A record rendered as a record ───────────────────────────────────────────────────────────
+// The grammar is SERVED too (Julia's `_LOG_HEAD_SRC` and friends), for the same reason the severity
+// vocabulary is: one definition of what a record is. These are the sources Julia sends.
+setSev({
+  declared: '^(?:' + SGR + '|\\s)*[┌\\[](?:' + SGR + '|\\s)*(Error|Warning|Info|Debug)\\b',
+  error: [B + '(error|fatal)\\b'], warn: [B + '(warn|warning|deprecat)'],
+  head: '^[┌\\[] (Error|Warning|Info|Debug)(?: ([0-9:.]+))?: ?(.*)$',
+  field: '^│ {3}([^ =][^=]*?) = ?(.*)$',
+  fcont: '^│ {4,}(.*)$',
+  mcont: '^│ ([^ ].*)$',
+  tail: '^└ @ (.*)$',
+});
+
+const one = cut(['┌ Info 18:19:12.865: iterating',
+                 '│   residual = 0.003521',
+                 '│   iteration = 284',
+                 '└ @ Main.SlateShard none:10'].join('\n'), 0);
+eq(one.map(l => l.r && l.r.role), ['head', 'field', 'field', 'tail'], 'the parts of a record');
+eq(one.map(l => l.head), [true, false, false, false], 'only the head starts one');
+eq(one[0].r.lvl + '|' + one[0].r.ts + '|' + one[0].r.msg, 'Info|18:19:12.865|iterating',
+   'level, clock and message come apart');
+
+const html = recordHtml(one, '', -1);
+// The source location is the same for every record a sweep body writes, so it moves to the hover
+// rather than taking a line each time.
+ok(html.includes('title="Main.SlateShard none:10"'), 'the location is on the record, not in it');
+ok(!html.includes('┌') && !html.includes('│') && !html.includes('└'), 'the box glyphs are gone');
+ok(html.includes('<b class="logv-lvl">INFO</b>'), 'the level is its own chip');
+// Every source line keeps its byte offset, because that is what a search hit is reported at and
+// what the viewer seeks to. Grouping is presentation laid over those, never a replacement.
+for (const l of one.slice(0, 3)) ok(html.includes(`data-o="${l.o}"`), `offset ${l.o} survives`);
+
+// A short value flows inline with its neighbours; one that runs long, or that carries continuation
+// lines under it, takes a block of its own — a stacktrace laid out in a run is unreadable.
+const exc = cut(['┌ Error 1:2:3.4: it died', '│   exception =', '│    boom', '│    Stacktrace:',
+                 '└ @ Main none:11'].join('\n'), 0);
+eq(exc.map(l => l.r && l.r.role), ['head', 'field', 'fcont', 'fcont', 'tail'],
+   'a value may run on under its key');
+ok(recordHtml(exc, '', -1).includes('logv-f wide'), 'a value with continuations gets a block');
+ok(!recordHtml(one, '', -1).includes('wide'), 'short fields do not');
+
+// A second line of the MESSAGE is not a field: ConsoleLogger indents fields and does not indent
+// message continuations, which is the only thing telling them apart.
+const multi = cut('┌ Info: first\n│ second\n│   k = 1\n└ @ M f:1', 0);
+eq(multi.map(l => l.r && l.r.role), ['head', 'mcont', 'field', 'tail'], 'message runs on, then fields');
+
+// Output that is not a record at all still renders as the plain text of the file.
+eq(cut('plain println\nslurmstepd: error: killed', 0).map(l => l.r), [null, null], 'no record, no parse');
 
 // ── The level filter ────────────────────────────────────────────────────────────────────────
 S.pages = [{ from: 0, to: 99, lines: cut('starting up\nWarning: slow\nERROR: died\nbye', 0) }];

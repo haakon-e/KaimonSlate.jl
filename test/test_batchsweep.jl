@@ -1655,6 +1655,35 @@ end
             # …and the sources are the ones Julia itself matches with, not a restatement.
             @test Regex(sev["error"][1], "i") == Sweep._LOG_BAD
 
+            # The record grammar travels with it, so the viewer can show a record as a record.
+            # Generated from the runner's OWN logger rather than from a hand-written fixture: these
+            # patterns are a claim about what `_task_logger` emits, and a fixture would let the two
+            # drift without a test noticing.
+            io = IOBuffer()
+            Logging.with_logger(SlateTask._task_logger(IOContext(io, :color => true))) do
+                @info "iterating" residual = 0.003521 iteration = 284
+                @warn "slow read"
+                @info "first\nsecond" k = 1
+            end
+            got = [Sweep._uncolour(l) for l in split(rstrip(String(take!(io))), "\n")]
+            role(l) = occursin(Regex(sev["head"]), l)  ? :head  :
+                      occursin(Regex(sev["field"]), l) ? :field :
+                      occursin(Regex(sev["fcont"]), l) ? :fcont :
+                      occursin(Regex(sev["mcont"]), l) ? :mcont :
+                      occursin(Regex(sev["tail"]), l)  ? :tail  : :plain
+            @test role.(got) == [:head, :field, :field, :tail,      # message + two fields
+                                 :head, :tail,                      # a record with nothing under it
+                                 :head, :mcont, :field, :tail]      # a message that runs on
+            h = match(Regex(sev["head"]), got[1])
+            @test h.captures[1] == "Info" && occursin(r"^\d\d:\d\d:\d\d\.\d+$", h.captures[2])
+            @test h.captures[3] == "iterating"
+            f = match(Regex(sev["field"]), got[2])
+            @test f.captures[1] == "residual" && f.captures[2] == "0.003521"
+            @test !isempty(match(Regex(sev["tail"]), got[4]).captures[1])
+            # Output that declares nothing is not a record, and must not be mistaken for one.
+            @test all(l -> role(l) === :plain,
+                      ["slurmstepd: error: Exceeded job memory limit", "Precompiling MyPkg", ""])
+
             # The chips count over the file as it is ON DISK, with the logger's colour codes still
             # in it, because that pass runs in ripgrep rather than here. `\e[1mWarning` has no word
             # boundary before the `W` — the `m` closing the escape is a word character — so a

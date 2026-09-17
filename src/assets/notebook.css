@@ -3259,6 +3259,28 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
    the air between records, so the shape of one message is visible at a glance. */
 .logv-l.logv-head-l { margin-top:.55em; }
 .logv-l.logv-head-l:first-child { margin-top:0; }
+
+/* A parsed record. The box glyphs and the repeated source location are dropped — the location is
+   the same for every record a sweep body writes — and the fields flow rather than taking a line
+   each, which is most of what made the pane tall. */
+.logv-rec { display:block; margin-top:.5em; }
+.logv-rec:first-child { margin-top:0; }
+.logv-rec[title] { cursor:help; }
+.logv-rh { white-space:pre-wrap; }
+.logv-lvl { display:inline-block; min-width:3.4em; font-weight:600; letter-spacing:.02em; }
+.logv-ts { color:var(--dim); margin:0 .7em 0 .35em; }
+.logv-msg { color:var(--text); }
+.logv-warn .logv-lvl, .logv-warn .logv-msg { color:var(--amber,#d9a441); }
+.logv-error .logv-lvl, .logv-error .logv-msg { color:var(--red,#e57575); }
+.logv-info .logv-lvl { color:var(--val); }
+/* The fields, indented under the message and wrapping as a run. */
+.logv-fs { display:block; padding-left:3.4em; opacity:.85; }
+.logv-f { display:inline; margin-right:1.3em; white-space:pre-wrap; }
+.logv-f > i { color:var(--dim); font-style:normal; margin-right:.4em; }
+/* …except one that is long or carries a stacktrace, which gets its own block. */
+.logv-f.wide { display:block; margin-right:0; }
+.logv-f.wide > .logv-l { display:block; padding-left:1.2em; }
+.logv-rec.rechit { background:color-mix(in srgb, var(--val) 18%, transparent); border-radius:3px; }
 .logv-info { color:var(--text); opacity:.72; }
 /* A line carrying its own SGR colour is rendered by ansi.js into .ansi-* spans, which
    already carry a colour — the level's own colour must not win over it. */

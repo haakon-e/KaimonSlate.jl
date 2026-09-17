@@ -3009,7 +3009,11 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
         # about the same line is the bug this prevents.
         out["logsev"] = Dict{String,Any}("declared" => _LOG_LEVEL_SRC,
                                          "error" => [_LOG_BAD_SRC, _LOG_BAD_COUNT_SRC],
-                                         "warn" => [_LOG_WARN_SRC])
+                                         "warn" => [_LOG_WARN_SRC],
+                                         # …and the shape of a record, so it can be shown as one.
+                                         "head" => _LOG_HEAD_SRC, "field" => _LOG_FIELD_SRC,
+                                         "fcont" => _LOG_FCONT_SRC, "mcont" => _LOG_MCONT_SRC,
+                                         "tail" => _LOG_TAIL_SRC)
         return out
     end
     # The three reads, each a bare reply rather than a status payload: a viewer polling a growing
@@ -3580,6 +3584,26 @@ const _LOG_WARN_SRC = _ANSI_B * raw"(warn|warning|deprecat)"
 # writes, which is what the task runner installs and what a sweep body is meant to use.
 const _LOG_LEVEL_SRC = "^(?:" * _ANSI_SGR_SRC * raw"|\s)*[┌\[](?:" * _ANSI_SGR_SRC *
                        raw"|\s)*(Error|Warning|Info|Debug)\b"
+# The SHAPE of one record, for a reader that wants to show it as a record rather than as five
+# lines of box drawing. `Logging.ConsoleLogger` writes
+#
+#     ┌ Info 18:19:12.865: iterating          ← head: level, the runner's clock, the message
+#     │   residual = 0.003521                 ← field, indented two past the `│`
+#     │   exception =                         ← …whose value may run on, indented further
+#     │    Stacktrace:
+#     │ line two of the message               ← a message continuation is NOT indented
+#     └ @ Main.SlateShard none:10             ← tail: where it was logged
+#
+# Served beside the severity vocabulary for the same reason: one definition of what a record is, so
+# the viewer and the card cannot come to different conclusions about the same line. Unlike the
+# patterns above these never reach ripgrep, so they read the line with its colour already off.
+# A stock logger writes no clock and `[ ` for a record with nothing under it; both are accepted.
+const _LOG_HEAD_SRC = raw"^[┌\[] (Error|Warning|Info|Debug)(?: ([0-9:.]+))?: ?(.*)$"
+const _LOG_FIELD_SRC = raw"^│ {3}([^ =][^=]*?) = ?(.*)$"
+const _LOG_FCONT_SRC = raw"^│ {4,}(.*)$"
+const _LOG_MCONT_SRC = raw"^│ ([^ ].*)$"
+const _LOG_TAIL_SRC = raw"^└ @ (.*)$"
+
 const _LOG_LEVEL = Regex(_LOG_LEVEL_SRC)
 const _LOG_BAD = Regex(_LOG_BAD_SRC, "i")
 const _LOG_BAD_COUNT = Regex(_LOG_BAD_COUNT_SRC, "i")
