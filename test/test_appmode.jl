@@ -22,6 +22,18 @@ const NS = KaimonSlate.NotebookServer
     @test ok("sweep:sw1_r2")
     # An author's own controls are what app mode exists to serve, so nothing else is refused.
     @test all(ok, ["bind:slider", "onclick:run", "mychannel", "table-page", "do", "x:do"])
+
+    # …and the status channel that IS reachable must only observe. `status_payload` reconciles by
+    # default, which for a started sweep submits the chunks still outstanding — so a reader with a
+    # card on screen would be putting work on someone else's cluster by watching it.
+    args = NS._app_channel_args
+    @test args("sweep:sw1_r2", nothing)["advance"] === false
+    @test args("sweep:sw1_r2", Dict("action" => "x"))["advance"] === false
+    # Pinned, not defaulted: a client that asks to advance is overruled.
+    @test args("sweep:sw1_r2", Dict("advance" => true))["advance"] === false
+    # Anything the author wired is passed through untouched.
+    @test args("bind:slider", Dict("v" => 3)) == Dict("v" => 3)
+    @test args("onclick:run", nothing) === nothing
 end
 
 @testset "app route allowlist" begin

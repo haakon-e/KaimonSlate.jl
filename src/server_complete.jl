@@ -3584,6 +3584,7 @@ function _ws_calls(stream, nb::LiveNotebook; app::Bool = false)
                 # Drop a call whose buffers didn't all arrive (undef slots) rather than dispatch a partial one.
                 bufs = (nbuf isa Real && nbuf > 0 && length(bufs) == nbuf && all(isassigned(bufs, j) for j in 1:nbuf)) ?
                        bufs : Vector{UInt8}[]
+                args = app ? _app_channel_args(ch, args) : args
                 if app && !_app_channel_allowed(ch)
                     _ws_send!(c, JSON.json(Dict{String,Any}("t" => "reply", "id" => cid, "ok" => false,
                         "error" => "this control is not served in app mode")))

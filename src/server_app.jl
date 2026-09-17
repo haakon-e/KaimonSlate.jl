@@ -175,6 +175,18 @@ end
 _app_channel_allowed(channel::AbstractString)::Bool =
     !(startswith(channel, "sweep:") && endswith(channel, ":do"))
 
+# …and the status channel that IS reachable observes only. `Sweep.status_payload` reconciles by
+# default, which for a started sweep submits the chunks still outstanding — so a reader with a card
+# on screen would be putting work on someone else's cluster by doing nothing but watching. Pinned
+# here, after the request is parsed, because a default a client can send is not a control.
+function _app_channel_args(channel::AbstractString, args)
+    startswith(channel, "sweep:") || return args
+    d = args isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in args) :
+                                Dict{String,Any}()
+    d["advance"] = false
+    return d
+end
+
 # The refusal. Deliberately explicit rather than a 404: an operator tailing the log while wondering
 # why the Files panel is missing should be told the posture, not left guessing at a broken route.
 _app_denied(target::AbstractString) = HTTP.Response(403,

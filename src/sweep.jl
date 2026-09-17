@@ -2695,7 +2695,11 @@ end
 "The channel a card polls. Keyed by the RUN, so a pilot and the full sweep do not share a card."
 status_channel(run::AbstractString) = "sweep:" * String(run)
 
-"The channel the card's buttons call. Separate from status so a poll can never be a mutation."
+"""
+The channel the card's buttons call. Separate from status so that submitting, cancelling and
+resetting are named apart from watching — a status poll still RECONCILES (`status_payload`), so
+"separate" is about which calls are deliberate, not about one of them being read-only.
+"""
 action_channel(run::AbstractString) = "sweep:" * String(run) * ":do"
 
 # ── What the job itself said ─────────────────────────────────────────────────────────────────
@@ -2813,8 +2817,7 @@ function log_paths(t::SweepTarget, run::AbstractString)
     l = launcher_for(t)
     root = job_root(t)
     names = run_jobs(t, run)
-    return Set(String(e.path)
-               for e in (try; BatchLauncher.log_files(l, root, names); catch; []; end))
+    return Set(String(e.path) for e in BatchLauncher.log_files(l, root, names))
 end
 
 function log_files(t::SweepTarget, run::AbstractString)
@@ -2829,7 +2832,10 @@ function log_files(t::SweepTarget, run::AbstractString)
     live = try; BatchLauncher.poll(l, root, names); catch; Dict{String,Symbol}(); end
     # Every submission's files in ONE listing. A sweep is reconciled, so it is normally several
     # submissions, and a round trip each is what opening the viewer used to cost on a cluster.
-    files = try; BatchLauncher.log_files(l, root, names); catch; []; end
+    # Deliberately NOT guarded. The caller turns a failure here into `logerr`, which the viewer
+    # shows; swallowing it renders an unreachable cluster as "no job output yet".
+    files = BatchLauncher.log_files(l, root, names)
+    # These two are guarded, because the listing is worth having without them.
     pids = Dict(nm => (try; BatchLauncher.job_pids(l, root, nm); catch; Int[]; end) for nm in names)
     out = NamedTuple[]
     for e in files
@@ -4428,7 +4434,12 @@ function run_sweep(target::SweepTarget, params::AbstractVector, body_src::Abstra
         note = (refresh === nothing || isempty(cell)) ? nothing :
                () -> refresh("cell:" * cell * "@" *
                              landed_digest(_rows(store_root(target), ps, ks, source_of(target))))
-        register(status_channel(run), _args -> status_payload(target, run, ps, ks; plot))
+        # `advance` is honoured rather than assumed, so a caller that must not move the sweep can
+        # say so. App mode pins it (`_app_channel_args`): a reader watching a card would otherwise
+        # be submitting this sweep's outstanding chunks by polling it.
+        register(status_channel(run),
+                 a -> status_payload(target, run, ps, ks; plot,
+                                     advance = get(a, :advance, true) !== false))
         register(action_channel(run),
                  a -> handle_action(target, run, ps, ks, String(get(a, :action, ""));
                                     plot, notify = note,

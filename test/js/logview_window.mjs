@@ -159,6 +159,27 @@ eq(multi.map(l => l.r && l.r.role), ['head', 'mcont', 'field', 'tail'], 'message
 // Output that is not a record at all still renders as the plain text of the file.
 eq(cut('plain println\nslurmstepd: error: killed', 0).map(l => l.r), [null, null], 'no record, no parse');
 
+// ── A log line cannot introduce markup ──────────────────────────────────────────────────────
+// The record renderer builds HTML by concatenation, which is the arrangement that gets this wrong.
+// Job output is not trusted input: it carries whatever a library, a C extension or a scheduler
+// decided to print, and it is rendered in the author's own page.
+{
+  const nasty = '</span><img src=x onerror=alert(1)>';
+  const shapes = {
+    message:    ['┌ Info 1:2:3.4: ' + nasty, '└ @ M f:1'],
+    fieldValue: ['┌ Info 1:2:3.4: x', '│   k = ' + nasty, '└ @ M f:1'],
+    stacktrace: ['┌ Error 1:2:3.4: x', '│   exception =', '│    ' + nasty, '└ @ M f:1'],
+    location:   ['┌ Info 1:2:3.4: x', '└ @ ' + nasty],
+    coloured:   ['\x1b[36m┌ \x1b[39mInfo 1:2:3.4: \x1b[39m' + nasty, '└ @ M f:1'],
+  };
+  for (const [what, lines] of Object.entries(shapes)) {
+    // Entities first, so the renderer's own spans are not mistaken for a leak.
+    const flat = recordHtml(cut(lines.join('\n'), 0), '', -1)
+      .replace(/&lt;|&gt;|&amp;|&quot;|&#39;/g, '~');
+    ok(!/<img|<script|<svg|onerror\s*=[^a-z]/i.test(flat), `${what} escapes its content`);
+  }
+}
+
 // ── How a chunk ended ───────────────────────────────────────────────────────────────────────
 // Worst first, because a run of hundreds of tasks is read by looking for the ones that went wrong,
 // and that is also the order the column sorts in.

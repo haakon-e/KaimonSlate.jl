@@ -892,7 +892,11 @@ _remote_log_files(runner, root, names::AbstractVector; ext::AbstractString = "ou
     for part in Iterators.partition(names, 150)
         glob = join(("$(dir)/$(n).*.$(ext)" for n in part), " ")
         ok, txt = runner(replace(_STAT_LINE, "%GLOB%" => glob) * " 2>/dev/null")
-        ok && append!(out, _parse_log_listing(txt))
+        # A glob matching nothing still exits 0 with no output, so a failure here is the transport
+        # and not an empty logs directory. Reported, because the alternative reads as "no output".
+        ok || error("could not list job output on the far side: " *
+                    first(strip(String(txt)), 200))
+        append!(out, _parse_log_listing(txt))
     end
     sort!(out; by = e -> (-e.modified, e.path))
     return out

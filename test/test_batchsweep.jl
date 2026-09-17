@@ -1612,6 +1612,11 @@ end
             # The reply is the listing and the vocabulary to read it with, and nothing else:
             # building the card's view first costs a plan and a manifest per shard before the
             # listing's own round trips even start, and the viewer throws all of it away.
+            # A status poll RECONCILES unless told not to, which is how a card left open keeps a
+            # sweep moving. A caller that must not move it says so: nothing goes out.
+            before = BS.read_attempts(Sweep.store_root(t))
+            Sweep.status_payload(t, r.run, r.params, r.keys; advance = false)
+            @test BS.read_attempts(Sweep.store_root(t)) == before
             @test !haskey(got, "state") && !haskey(got, "done")
             @test issubset(Set(keys(got)), Set(["loglist", "logsev", "logerr"]))
             # …and it is a question, not a mutation: nothing about the sweep moved. Asked of the
