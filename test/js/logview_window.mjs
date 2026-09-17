@@ -30,7 +30,7 @@ try { (0, eval)(src); LV = globalThis.slateLogs; } catch (e) {
 }
 if (!LV || !LV._test) { console.error('logview: logview.js exposed no test surface'); process.exit(2); }
 
-const { S, cut, visible, sevOf, setSev, paintLine, recordHtml } = LV._test;
+const { S, cut, visible, sevOf, setSev, paintLine, recordHtml, fileStatus } = LV._test;
 const fails = [];
 const ok = (cond, what) => { if (!cond) fails.push(what); };
 const eq = (got, want, what) => {
@@ -158,6 +158,23 @@ eq(multi.map(l => l.r && l.r.role), ['head', 'mcont', 'field', 'tail'], 'message
 
 // Output that is not a record at all still renders as the plain text of the file.
 eq(cut('plain println\nslurmstepd: error: killed', 0).map(l => l.r), [null, null], 'no record, no parse');
+
+// ── How a chunk ended ───────────────────────────────────────────────────────────────────────
+// Worst first, because a run of hundreds of tasks is read by looking for the ones that went wrong,
+// and that is also the order the column sorts in.
+const st = f => fileStatus(Object.assign({ failed: 0, done: 0, total: 0, running: false }, f));
+eq(st({ failed: 2, done: 4, total: 4 }).txt, '2 failed', 'a reported failure');
+eq(st({ done: 4, total: 4 }).txt, 'ok', 'every unit landed');
+eq(st({ done: 2, total: 4, running: true }).txt, '2/4', 'still going');
+eq(st({ running: true }).txt, 'running', 'started, nothing reported yet');
+eq(st({}).txt, '—', 'nothing to say');
+// The state a status file cannot express on its own. A killed process leaves its counts
+// part-written, which reads the same as progress until you ask whether the job is still there.
+eq(st({ done: 2, total: 4 }).txt, '2/4 stopped', 'counts stopped and the job is gone');
+eq(st({ done: 2, total: 4 }).cls, 'stop', '…and it is not styled as progress');
+const ords = [st({ failed: 1 }), st({ done: 2, total: 4 }), st({ done: 2, total: 4, running: true }),
+              st({ done: 4, total: 4 }), st({})].map(x => x.ord);
+eq(ords, [4, 3, 2, 1, 0], 'worst first');
 
 // ── The level filter ────────────────────────────────────────────────────────────────────────
 S.pages = [{ from: 0, to: 99, lines: cut('starting up\nWarning: slow\nERROR: died\nbye', 0) }];

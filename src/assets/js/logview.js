@@ -140,6 +140,7 @@
             <input class="logv-ffilter" type="search" placeholder="filter files or nodes…" spellcheck="false"/>
             <div class="logv-files"></div>
           </div>
+          <div class="logv-split" title="drag to resize"></div>
           <div class="logv-main">
             <div class="logv-bar">
               <div class="logv-levels">
@@ -187,6 +188,36 @@
       if (!b) return;
       S.filter = b.dataset.lv; refilterHits(); paintBar(); paintPre();
     });
+    // The file list against the file. Which one you want more of depends on the sweep — three
+    // chunks and a huge log, or six hundred array tasks — so it is dragged rather than chosen here,
+    // and remembered, because a width you set every time you open a pane is a width nobody sets.
+    (() => {
+      const side = q('.logv-side'), bar = q('.logv-split');
+      const put = w => { side.style.width = Math.round(w) + 'px'; };
+      const saved = parseInt(localStorage.getItem('slate.logv.side') || '', 10);
+      if (saved > 0) put(saved);
+      let from = 0, w0 = 0;
+      const move = e => {
+        // Bounded so neither pane can be dragged away entirely: a zero-width side is a control the
+        // reader cannot get back without knowing the key it was stored under.
+        const w = Math.max(220, Math.min(w0 + (e.clientX - from), el.querySelector('.logv').clientWidth - 320));
+        put(w);
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+        document.body.classList.remove('logv-dragging');
+        try { localStorage.setItem('slate.logv.side', String(side.clientWidth)); } catch (e) {}
+      };
+      bar.addEventListener('mousedown', e => {
+        e.preventDefault(); from = e.clientX; w0 = side.clientWidth;
+        document.body.classList.add('logv-dragging');
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      });
+      // Double-click restores the default, which is the way back from any width.
+      bar.addEventListener('dblclick', () => {
+        side.style.width = ''; try { localStorage.removeItem('slate.logv.side'); } catch (e) {}
+      });
+    })();
     q('.logv-order').onclick = () => {
       S.order = S.order === 'new' ? 'old' : 'new';
       reload();
@@ -269,12 +300,19 @@
   // another is which array task wrote it, where it ran, and how it ended, so those are the columns.
   // The name is still there, in the row's tooltip, for when you need to name one to someone else.
   //
-  // How a chunk ENDED, from its own status file: no scheduler is asked, so this is as true for a
-  // laptop as for a queue, and a file with no status yet says so rather than claiming success.
+  // How a chunk ended, or that it has not. The order is worst-first, which is the order the
+  // column sorts in and the order a reader wants: a run of six hundred tasks is read by looking
+  // for the ones that went wrong.
+  //
+  // `stopped` is the state a status file alone cannot express. A process that was killed — out of
+  // memory, out of walltime — leaves its counts part-written, which is `done < total` with nothing
+  // failed, and that is also what progress looks like. Only whether the job is still there tells
+  // them apart, so the listing carries that.
   function fileStatus(f) {
-    if (f.failed > 0) return { txt: f.failed + ' failed', cls: 'error', ord: 3 };
+    if (f.failed > 0) return { txt: f.failed + ' failed', cls: 'error', ord: 4 };
     if (f.total > 0 && f.done >= f.total) return { txt: 'ok', cls: 'ok', ord: 1 };
-    if (f.done > 0) return { txt: f.done + '/' + f.total, cls: 'run', ord: 2 };
+    if (f.running) return { txt: f.total ? f.done + '/' + f.total : 'running', cls: 'run', ord: 2 };
+    if (f.done > 0) return { txt: f.done + '/' + f.total + ' stopped', cls: 'stop', ord: 3 };
     return { txt: '—', cls: 'none', ord: 0 };
   }
 
@@ -671,5 +709,5 @@
   // The addressing is the part that has to be right and the part a browser cannot show you is
   // wrong: an off-by-one in a byte offset looks like a highlight on the neighbouring line. Exposed
   // so `test/js/logview_window.mjs` can pin it without a DOM.
-  window.slateLogs = { open, close, _test: { S, cut, visible, sevOf, setSev, paintLine, roleOf, recordHtml } };
+  window.slateLogs = { open, close, _test: { S, cut, visible, sevOf, setSev, paintLine, roleOf, recordHtml, fileStatus } };
 })();

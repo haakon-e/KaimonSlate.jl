@@ -3202,7 +3202,14 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
 .logv-x:hover { color:var(--text); }
 
 .logv-body { display:flex; flex:1 1 auto; min-height:0; }
-.logv-side { width:400px; flex:0 0 auto; border-right:1px solid var(--border); display:flex; flex-direction:column; min-height:0; }
+.logv-side { width:400px; flex:0 0 auto; display:flex; flex-direction:column; min-height:0; }
+/* The drag handle IS the border between the panes, widened to something a mouse can find. */
+.logv-split { flex:0 0 auto; width:5px; cursor:col-resize; background:var(--border);
+  background-clip:content-box; border-left:2px solid transparent; border-right:2px solid transparent; }
+.logv-split:hover, body.logv-dragging .logv-split { background-color:var(--val); }
+/* While dragging, nothing else takes the pointer — a selection started mid-drag fights the resize. */
+body.logv-dragging { cursor:col-resize; user-select:none; }
+body.logv-dragging .logv-body * { pointer-events:none; }
 .logv-ffilter { margin:8px; background:var(--bg); color:var(--text); border:1px solid var(--border);
   border-radius:5px; padding:4px 7px; font-size:.8rem; }
 .logv-levels button, .logv-order, .logv-pause, .logv-icase, .logv-rx,
@@ -3235,6 +3242,9 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
 .logv-node { color:var(--dim); max-width:130px; overflow:hidden; text-overflow:ellipsis; }
 .logv-st-ok   { color:var(--val); }
 .logv-st-run  { color:var(--amber,#d9a441); }
+/* Stopped short: not a reported failure, and not progress either. Red, because a job that died
+   part-way is the thing you are looking for, but unfilled so it does not read as a counted one. */
+.logv-st-stop { color:var(--red,#e57575); opacity:.85; font-style:italic; }
 .logv-st-error{ color:var(--red,#e57575); }
 .logv-st-none { color:var(--dim); opacity:.6; }
 .logv-none { padding:10px; font-size:.78rem; color:var(--dim); line-height:1.5; }
