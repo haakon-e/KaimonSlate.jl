@@ -125,10 +125,17 @@ eq(one.map(l => l.head), [true, false, false, false], 'only the head starts one'
 eq(one[0].r.lvl + '|' + one[0].r.ts + '|' + one[0].r.msg, 'Info|18:19:12.865|iterating',
    'level, clock and message come apart');
 
+const warnRec = cut('\u250c Warning 1:2:3.4: slow\n\u2514 @ M f:1', 0);
+const exc0 = cut('\u250c Error 1:2:3.4: died\n\u2514 @ M f:1', 0);
+ok(recordHtml(warnRec, '', -1).includes('>WARN<'), 'Warning is WARN, not WARNI');
 const html = recordHtml(one, '', -1);
 // The source location is the same for every record a sweep body writes, so it moves to the hover
 // rather than taking a line each time.
-ok(html.includes('title="Main.SlateShard none:10"'), 'the location is on the record, not in it');
+// As an element, not a `title`: the browser draws that as a box over whatever you were reading.
+ok(html.includes('<span class="logv-at">Main.SlateShard none:10</span>'), 'the location is shown on hover');
+ok(!html.includes('title='), 'and never as a native tooltip');
+// `Warning` cut to a fixed width read as `WARNI`.
+ok(recordHtml(exc0, '', -1).includes('>ERROR<'), 'the level is spelled, not sliced');
 ok(!html.includes('┌') && !html.includes('│') && !html.includes('└'), 'the box glyphs are gone');
 ok(html.includes('<b class="logv-lvl">INFO</b>'), 'the level is its own chip');
 // Every source line keeps its byte offset, because that is what a search hit is reported at and

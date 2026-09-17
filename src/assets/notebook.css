@@ -3263,23 +3263,36 @@ body.is-presenter > .hydbanner, body.is-presenter > #selcount { display: none !i
 /* A parsed record. The box glyphs and the repeated source location are dropped — the location is
    the same for every record a sweep body writes — and the fields flow rather than taking a line
    each, which is most of what made the pane tall. */
-.logv-rec { display:block; margin-top:.5em; }
+.logv-rec { display:block; margin-top:.5em; padding-left:.5em;
+  border-left:2px solid transparent; }
 .logv-rec:first-child { margin-top:0; }
-.logv-rec[title] { cursor:help; }
 .logv-rh { white-space:pre-wrap; }
-.logv-lvl { display:inline-block; min-width:3.4em; font-weight:600; letter-spacing:.02em; }
-.logv-ts { color:var(--dim); margin:0 .7em 0 .35em; }
+/* The level reads as a label, not as shouting: small, tracked out, and the only thing at full
+   strength on an ordinary line. The fixed width is what lines the timestamps up down the page. */
+.logv-lvl { display:inline-block; min-width:4.2em; font-size:.85em; font-weight:700;
+  letter-spacing:.06em; opacity:.9; }
+.logv-ts { color:var(--dim); font-variant-numeric:tabular-nums; margin-right:.85em; }
 .logv-msg { color:var(--text); }
+/* A warning or an error earns the colour. An info record does not: a pane where every line is
+   coloured is a pane with no signal in it, so only its label is tinted. */
+.logv-warn { border-left-color:color-mix(in srgb, var(--amber,#d9a441) 55%, transparent); }
+.logv-error { border-left-color:color-mix(in srgb, var(--red,#e57575) 65%, transparent); }
 .logv-warn .logv-lvl, .logv-warn .logv-msg { color:var(--amber,#d9a441); }
 .logv-error .logv-lvl, .logv-error .logv-msg { color:var(--red,#e57575); }
 .logv-info .logv-lvl { color:var(--val); }
-/* The fields, indented under the message and wrapping as a run. */
-.logv-fs { display:block; padding-left:3.4em; opacity:.85; }
-.logv-f { display:inline; margin-right:1.3em; white-space:pre-wrap; }
-.logv-f > i { color:var(--dim); font-style:normal; margin-right:.4em; }
+/* Where it was logged. The same string on every record a sweep body writes, so it stays out of the
+   way until asked for — and as an element rather than a `title`, which the browser draws as a box
+   over whatever you were reading. */
+.logv-at { color:var(--dim); margin-left:1em; font-size:.9em; opacity:0;
+  transition:opacity .12s ease; }
+.logv-rec:hover .logv-at { opacity:.65; }
+/* The fields, aligned under the message and wrapping as a run. */
+.logv-fs { display:block; padding-left:4.2em; }
+.logv-f { display:inline-block; margin-right:1.4em; white-space:pre-wrap; }
+.logv-f > i { color:var(--dim); font-style:normal; font-size:.9em; margin-right:.45em; }
 /* …except one that is long or carries a stacktrace, which gets its own block. */
 .logv-f.wide { display:block; margin-right:0; }
-.logv-f.wide > .logv-l { display:block; padding-left:1.2em; }
+.logv-f.wide > .logv-l { display:block; padding-left:1.2em; opacity:.9; }
 .logv-rec.rechit { background:color-mix(in srgb, var(--val) 18%, transparent); border-radius:3px; }
 .logv-info { color:var(--text); opacity:.72; }
 /* A line carrying its own SGR colour is rendered by ansi.js into .ansi-* spans, which

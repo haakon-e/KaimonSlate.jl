@@ -61,6 +61,8 @@
     return null;
   }
   const LVL = { Error: 'error', Warning: 'warn', Info: 'info', Debug: 'info' };
+  // What the badge says. `Warning` sliced to a fixed width read as `WARNI`.
+  const LVLNAME = { Error: 'ERROR', Warning: 'WARN', Info: 'INFO', Debug: 'DEBUG' };
   // A line that NAMES its level is believed and nothing else is consulted: `@info "0 errors so far"`
   // contains the word and is not one. Word-sniffing is the fallback for output that declares
   // nothing — a bare `println`, a C library, the scheduler's own messages.
@@ -509,7 +511,7 @@
       if (mark) { try { x = x.replace(new RegExp('(' + mark + ')', 'gi'), '<mark>$1</mark>'); } catch (e) {} }
       return x;
     };
-    const lvl = (r.lvl || '').toUpperCase().slice(0, 5);
+    const lvl = LVLNAME[r.lvl] || (r.lvl || '').toUpperCase();
     let msg = mk(r.msg);
     let out = '', tail = '', fields = '', anyHit = lines.some(l => l.o === at);
     for (let k = 1; k < lines.length; k++) {
@@ -535,10 +537,10 @@
     out = `<span class="logv-l logv-rh${hitCls(h, at)}" data-o="${h.o}">` +
           `<b class="logv-lvl">${esc(lvl)}</b>` +
           (r.ts ? `<span class="logv-ts">${esc(r.ts)}</span>` : '') +
-          `<span class="logv-msg">${msg}</span></span>`;
+          `<span class="logv-msg">${msg}</span>` +
+          (tail ? `<span class="logv-at">${tail}</span>` : '') + `</span>`;
     if (fields) out += `<span class="logv-fs">${fields}</span>`;
-    return `<div class="logv-rec logv-${h.sev}${anyHit ? ' rechit' : ''}"` +
-           (tail ? ` title="${tail}"` : '') + `>${out}</div>`;
+    return `<div class="logv-rec logv-${h.sev}${anyHit ? ' rechit' : ''}">${out}</div>`;
   }
 
   function paintBar() {
