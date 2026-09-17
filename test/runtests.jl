@@ -3,13 +3,15 @@
 # uses ReTest's LAZY `@testset` — so a subset can be run by pattern:
 #   run_tests(pattern="parsched")                       # via Kaimon
 #   julia --project -e 'using Pkg; Pkg.test(test_args=["parsched"])'
-# The suite's OWN config home, set before anything reads one.
+# The suite's OWN home, set before anything reads one. `KAIMONSLATE_HOME` is the documented
+# shortcut for all three (`SlateHome`: config, data, cache), and a const like `_REMOTE_LOG` resolves
+# at module load, so this has to come before the includes below.
 #
-# `region_set!`, `clusters.json` and the rest resolve through `KAIMONSLATE_CONFIG_HOME` and fall
-# back to the developer's `~/.config/kaimonslate`. Without this a test that invents a region leaves
-# it in the real Remotes list, and the NEXT run reads it back and acts on it — which is how a suite
-# comes to open an ssh connection nobody asked for, against a host a previous run made up.
-ENV["KAIMONSLATE_CONFIG_HOME"] = mktempdir(; cleanup = true)
+# Without it every home falls back to the developer's. The registry is the one that bites: a test
+# that invents a region writes it into the real Remotes list, and the sweep then walks the REAL
+# regions beside it — which point at real machines. That is a suite opening ssh connections to a
+# cluster because it ran, and a test that hangs for as long as one takes to answer.
+ENV["KAIMONSLATE_HOME"] = mktempdir(; cleanup = true)
 
 using ReTest
 
