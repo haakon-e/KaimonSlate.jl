@@ -32,6 +32,7 @@ module Engine;    include("test_engine.jl");    end
 module Eval;      include("test_eval.jl");      end
 module Deps;      include("test_deps.jl");      end
 module Envprep;   include("test_envprep.jl");   end
+module Gateauth;  include("test_gateauth.jl"); end
 module Tools;     include("test_tools.jl");     end
 module Registry;  include("test_registry.jl");  end
 module Toolcell;  include("test_toolcell.jl");  end

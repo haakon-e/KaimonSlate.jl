@@ -52,6 +52,7 @@ include(joinpath(@__DIR__, "trace.jl"))     # @trace / SlateTrace inline value t
 include(joinpath(@__DIR__, "paged.jl"))     # PagedProvider / SlatePagedTable / slate_query (provider registry)
 include(joinpath(@__DIR__, "widgets.jl"))   # shared @bind widgets + namespace contract (engine + worker)
 include(joinpath(@__DIR__, "envprep.jl"))   # shared notebook-env prep policy (seed/dev-path/staleness; engine + worker + remote)
+include(joinpath(@__DIR__, "gateauth.jl"))  # how the gate's auth switches are read (pure; unit-tested on its own)
 include(joinpath(@__DIR__, "docharvest.jl")) # shared docstring harvest (runs where the deps are loaded)
 include(joinpath(@__DIR__, "demux.jl"))     # task-demux output capture (parallel evaluator I/O isolation)
 include(joinpath(@__DIR__, "parsched.jl"))  # ParCell / par_blockers / run_scheduled — parallel batch scheduler
@@ -2723,14 +2724,7 @@ function _revoke_blob_client!(pubkey::AbstractString)
     end
 end
 
-# Does the blob channel allow-list its clients, or accept any peer holding the server's public key?
-# Read from the environment switch KaimonGate reads, not from KaimonGate's internals: those are not
-# module-level names in every release, and the failed lookup answered "do not enforce". Unset means
-# enforce, so a setting this cannot read fails closed. A gate told to allow any by its own config
-# file rather than by the environment therefore leaves this channel stricter than itself, which is
-# the direction to be wrong in.
-_truthy(v) = lowercase(strip(String(v))) in ("1", "true", "yes", "on")
-_blob_enforce() = !_truthy(get(ENV, "KAIMON_GATE_CURVE_ALLOW_ANY", ""))
+_blob_enforce() = blob_enforce()      # gateauth.jl, where it is unit-tested
 
 const _BLOB_ZAP_DOMAIN = "kaimon-blob"
 const _BLOB_CTX = Ref{Any}(nothing)   # anchor the blob ZMQ context so GC can't finalize it mid-serve
