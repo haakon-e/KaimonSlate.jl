@@ -1536,6 +1536,18 @@ end
             # A scheduler's work is identified by its own job id, and this machine cannot signal it.
             @test isempty(Sweep.BatchLauncher.job_pids(
                 Sweep.BatchLauncher.SlurmLauncher("login"), root, f["job"]))
+            # …and they are BOUNDED here, not trusted. The viewer asks for a page at a time, but
+            # the numbers come over the wire and the whole reply is built before any of it is sent,
+            # so a log is the one thing in the store big enough that believing them costs memory.
+            @test Sweep._opt_span((; nbytes = 1 << 40), :nbytes, 1 << 16, Sweep.LOG_SLICE_MAX) ==
+                  Sweep.LOG_SLICE_MAX
+            @test Sweep._opt_span((; offset = -(1 << 40)), :offset, 0, Sweep.LOG_SLICE_MAX) ==
+                  -Sweep.LOG_SLICE_MAX
+            @test Sweep._opt_span((;), :nbytes, 1 << 16, Sweep.LOG_SLICE_MAX) == 1 << 16
+            @test act("log_slice"; nbytes = string(1 << 40))["size"] == sz     # no blow-up
+            big = act("log_search"; pattern = "ERROR", limit = 10^9)
+            @test length(big["hits"]) <= Sweep.LOG_HITS_MAX && big["total"] == 12
+
             # Numbers survive arriving as strings: a browser is free to send either.
             sl = act("log_slice"; offset = "-4096", nbytes = "4096")
             @test sl["size"] == sz && sl["to"] == sz - 1 && !isempty(sl["text"])

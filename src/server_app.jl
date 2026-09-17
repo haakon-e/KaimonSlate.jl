@@ -161,6 +161,20 @@ function _app_route_allowed(method::AbstractString, target::AbstractString;
     return workbook && _workbook_route(method, path)
 end
 
+# Channels an app reader may not call.
+#
+# The allowlist above covers HTTP targets. A `slateCall` is a frame on the page WebSocket, and that
+# route passes the check once at the upgrade, so the frames after it are unchecked. That is right
+# for an app's own controls: `@bind` and `@onclick` are `slate_on` handlers, and refusing them would
+# leave an app with nothing working.
+#
+# A sweep cell is the exception, because Slate registers its action channel rather than the author
+# — nobody chose to publish it — and what it does is submit and cancel work on a cluster and read
+# that cluster's job logs. The status channel stays open: the card polls it, and the two are
+# separate names precisely so a poll can never be a mutation (`Sweep.action_channel`).
+_app_channel_allowed(channel::AbstractString)::Bool =
+    !(startswith(channel, "sweep:") && endswith(channel, ":do"))
+
 # The refusal. Deliberately explicit rather than a 404: an operator tailing the log while wondering
 # why the Files panel is missing should be told the posture, not left guessing at a broken route.
 _app_denied(target::AbstractString) = HTTP.Response(403,

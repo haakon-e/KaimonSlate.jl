@@ -3535,7 +3535,7 @@ function _install_sshauth_watch!(h)
     return nothing
 end
 
-function _ws_calls(stream, nb::LiveNotebook)
+function _ws_calls(stream, nb::LiveNotebook; app::Bool = false)
     if !HTTP.WebSockets.isupgrade(stream.message)
         HTTP.setstatus(stream, 426); HTTP.startwrite(stream); return nothing
     end
@@ -3584,6 +3584,11 @@ function _ws_calls(stream, nb::LiveNotebook)
                 # Drop a call whose buffers didn't all arrive (undef slots) rather than dispatch a partial one.
                 bufs = (nbuf isa Real && nbuf > 0 && length(bufs) == nbuf && all(isassigned(bufs, j) for j in 1:nbuf)) ?
                        bufs : Vector{UInt8}[]
+                if app && !_app_channel_allowed(ch)
+                    _ws_send!(c, JSON.json(Dict{String,Any}("t" => "reply", "id" => cid, "ok" => false,
+                        "error" => "this control is not served in app mode")))
+                    continue
+                end
                 @async begin
                     reply = _do_slate_call(nb, ch, args, string(cid); buffers = bufs); reply["id"] = cid; reply["t"] = "reply"
                     payload = try
@@ -3749,7 +3754,7 @@ function start_hub(; host = "127.0.0.1", port = 8765, app::Bool = false,
         elseif (mw = match(_WS_RE, target)) !== nothing        # per-page WebSocket — JS→Julia calls
             nb = lock(h.lock) do; get(h.notebooks, mw.captures[1], nothing); end
             nb === nothing && (nb = _reopen_persisted!(h, mw.captures[1]))
-            nb === nothing ? (HTTP.setstatus(stream, 404); HTTP.startwrite(stream)) : _ws_calls(stream, nb)
+            nb === nothing ? (HTTP.setstatus(stream, 404); HTTP.startwrite(stream)) : _ws_calls(stream, nb; app = h.app)
         elseif startswith(target, "/api/import-standalone")   # long-lived SSE; raw Stream, not router
             _sse_import(stream, h)
         elseif startswith(target, "/api/preflight-stream")     # streamed remote preflight (step-by-step)

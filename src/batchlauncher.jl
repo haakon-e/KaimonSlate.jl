@@ -979,7 +979,8 @@ and may return nothing at all.
 """
 function explain_failure(l::SlurmLauncher, name::AbstractString)
     ok, txt = (_ssh(l,
-        "sacct -n -X --name=$(name) -o JobID,State,ExitCode,Elapsed,MaxRSS 2>/dev/null"))
+        "sacct -n -X --name=" * _shq(String(name)) *
+        " -o JobID,State,ExitCode,Elapsed,MaxRSS 2>/dev/null"))
     return ok ? txt : ""
 end
 

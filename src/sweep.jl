@@ -2951,6 +2951,15 @@ to encode them into a string.
 _opt_int(opts, key::Symbol, default::Int) =
     (v = get(opts, key, nothing); v === nothing ? default :
      v isa Integer ? Int(v) : something(tryparse(Int, string(v)), default))
+
+# A window and a hit list, bounded HERE rather than trusted from the caller. The viewer asks for a
+# page at a time and stops at two thousand hits, but the numbers arrive over the wire and a log is
+# the one thing in the store big enough that believing them costs the hub its memory: the reply is
+# built in full before any of it is sent.
+const LOG_SLICE_MAX = 1 << 22        # 4 MB per window
+const LOG_HITS_MAX = 5000
+_opt_span(opts, key::Symbol, default::Int, cap::Int) =
+    clamp(_opt_int(opts, key, default), -cap, cap)
 function handle_action(target::SweepTarget, run::AbstractString, params, keys,
                        action::AbstractString; plot = nothing, notify = nothing,
                        landed = nothing, arg::AbstractString = "", opts = (;))
@@ -3010,15 +3019,15 @@ function handle_action(target::SweepTarget, run::AbstractString, params, keys,
         return Dict{String,Any}("bytes" => st.bytes, "modified" => st.modified)
     end
     if action == "log_slice"
-        s = log_slice(target, run, arg; offset = _opt_int(opts, :offset, -(1 << 16)),
-                                        nbytes = _opt_int(opts, :nbytes, 1 << 16))
+        s = log_slice(target, run, arg; offset = _opt_span(opts, :offset, -(1 << 16), typemax(Int) >> 1),
+                                        nbytes = _opt_span(opts, :nbytes, 1 << 16, LOG_SLICE_MAX))
         return Dict{String,Any}("text" => s.text, "from" => s.from, "to" => s.to, "size" => s.size)
     end
     if action == "log_search"
         r = log_search(target, run, arg, String(get(opts, :pattern, ""));
                        ignorecase = get(opts, :ignorecase, false) == true,
                        regex = get(opts, :regex, false) == true,
-                       limit = _opt_int(opts, :limit, 1000))
+                       limit = clamp(_opt_int(opts, :limit, 1000), 0, LOG_HITS_MAX))
         return Dict{String,Any}("total" => r.total, "capped" => r.capped,
                                 "hits" => [Dict{String,Any}("offset" => h.offset, "line" => h.line,
                                                             "text" => h.text) for h in r.hits])

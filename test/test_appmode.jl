@@ -8,6 +8,22 @@ using KaimonSlate
 import JSON
 const NS = KaimonSlate.NotebookServer
 
+@testset "an app reader cannot command a sweep" begin
+    # The route allowlist stops at the WebSocket upgrade. Every `slateCall` after it rides that one
+    # socket, so a channel is reachable in app mode unless something else says otherwise — and the
+    # sweep card's action channel is registered by Slate, not by the author, so publishing a
+    # notebook that contains a sweep cell would hand a reader `submit`, `cancel` and `reset`
+    # against a cluster allocation, plus the job logs and their paths on that cluster.
+    ok = NS._app_channel_allowed
+    @test !ok(KaimonSlate.ReportEngine.Sweep.action_channel("sw1_r2"))
+    @test !ok("sweep:sw1_r2:do")
+    # The card still polls. Status and action are separate names for exactly this reason.
+    @test ok(KaimonSlate.ReportEngine.Sweep.status_channel("sw1_r2"))
+    @test ok("sweep:sw1_r2")
+    # An author's own controls are what app mode exists to serve, so nothing else is refused.
+    @test all(ok, ["bind:slider", "onclick:run", "mychannel", "table-page", "do", "x:do"])
+end
+
 @testset "app route allowlist" begin
     allowed(m, t) = NS._app_route_allowed(m, t)
 
