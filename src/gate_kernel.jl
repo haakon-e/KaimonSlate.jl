@@ -267,8 +267,13 @@ end
 # counter) push the counter past them first.
 # `taken` is every port already listening on the machine the worker will bind on. `_port_free`
 # probes this process's loopback, which is the wrong machine for a remote worker.
-function _next_ports(; floor::Int = 0, reserve::Int = 2, taken = nothing)
+# `probe` is whether to also test the port HERE. That question only means something for a worker
+# that will bind on this machine: for a remote one `_port_free` is the wrong host, and the only
+# thing it can produce is a false busy — a port free on the cluster, skipped because something
+# local happens to hold it.
+function _next_ports(; floor::Int = 0, reserve::Int = 2, taken = nothing, probe::Bool = true)
     busy(p) = taken !== nothing && p in taken
+    free(p) = !probe || _port_free(p)
     lock(_PORT_LOCK) do            # atomic bump — concurrent spawns must not grab the same port
         _GATE_PORT[] = max(_GATE_PORT[], floor)
         for _ in 1:_PORT_SCAN_MAX
@@ -280,7 +285,7 @@ function _next_ports(; floor::Int = 0, reserve::Int = 2, taken = nothing)
             # EVERY port in the block, not just the gate: the stream port is the one whose reuse is
             # silent, so skipping the block is the whole fix.
             blk = p:(p + reserve - 1)
-            (!any(busy, blk) && all(_port_free, blk)) && return (p, p + 1)
+            (!any(busy, blk) && all(free, blk)) && return (p, p + 1)
         end
         error("slate: no free worker port block of $reserve in $_PORT_BASE:$_PORT_CEILING " *
               "after $_PORT_SCAN_MAX probes — are there stale workers holding ports?")

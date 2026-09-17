@@ -578,6 +578,45 @@ end
         @test Sweep.launcher_for(ct).root == Sweep.job_root(ct) == "/scratch/there"
     end
 
+    @testset "a store on a shared machine is not world-readable" begin
+        # A store lives on scratch, which is outside whatever a home directory protects, and it
+        # holds results, job output AND the source of the body that produced them. A site's default
+        # umask is routinely 002, so without a mode of its own every account on the cluster can read
+        # a sweep — including anything the closure captured on its way there.
+        @test Sweep.store_umask("0700") == "077"      # private
+        @test Sweep.store_umask("0750") == "027"      # the project group may read
+        @test Sweep.store_umask("0770") == "007"
+        @test Sweep.store_umask("") == ""             # follow the site, deliberately
+
+        # Private unless the definition says otherwise, and a bad mode is refused rather than
+        # quietly ignored — a wrong permission is silent, which is the failure worth making loud.
+        @test Sweep.cluster_args(Dict("kind" => "exec", "host" => "h",
+                                      "root_remote" => "/s")).mode == "0700"
+        @test Sweep.cluster_args(Dict("kind" => "exec", "host" => "h", "root_remote" => "/s",
+                                      "mode" => "0750")).mode == "0750"
+        @test_throws ErrorException Sweep.cluster_args(
+            Dict("kind" => "exec", "host" => "h", "root_remote" => "/s", "mode" => "rwx"))
+        @test_throws ErrorException Sweep.cluster_args(
+            Dict("kind" => "exec", "host" => "h", "root_remote" => "/s", "mode" => "0799"))
+
+        # It survives the rebuilds, which take every field POSITIONALLY — the way a new field goes
+        # missing here is by being dropped in one of them, and nothing else would notice.
+        ct = Sweep.ClusterTarget("h"; kind = :exec, root = "/m", root_remote = "/s", mode = "0750")
+        @test Sweep.with_chunk(ct, 4).mode == "0750"
+        @test Sweep.with_resources(ct, (; cpus = 2)).mode == "0750"
+        @test Sweep.store_umask(ct) == "027"
+
+        # …and it reaches the shell that runs the work, before the site's own prologue: whatever a
+        # `module load` writes into the store belongs to the store.
+        spec = BL.JobSpec("j", ["c1"]; root = "/s", project = "/p", payload = "/t.jl",
+                          prologue = "module load julia", umask = "077")
+        cmd = BL.task_command(spec, ["c1"])
+        @test startswith(cmd, "umask 077\n")
+        @test findfirst("umask 077", cmd)[1] < findfirst("module load", cmd)[1]
+        @test !occursin("umask", BL.task_command(BL.JobSpec("j", ["c1"]; root = "/s",
+                                                            project = "/p", payload = "/t.jl"), ["c1"]))
+    end
+
     @testset "what is LEFT of an allocation" begin
         # SLURM reports it (`squeue %L`); PBS does not, so it is the walltime asked for minus the
         # walltime used — and both sides of that subtraction are scheduler times.

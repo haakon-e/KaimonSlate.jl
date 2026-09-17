@@ -37,6 +37,20 @@ cell submits to:
 | **Chunk** | how many sweep units ride one scheduler job. |
 | **At once** | `exec` only: how many tasks run in parallel on that machine. Blank follows the setting below. |
 | **Prologue** | shell run before every job — `module load julia`, usually. |
+| **Mode** | who may read the store, as an octal directory mode. `0700` (the default) is yours alone; `0750` lets your unix group read it; blank follows the site's own umask. |
+
+### Who can read a sweep
+
+A store holds the results, the job output, and the source of the body that produced them — including
+whatever the closure captured on its way to the cluster. It also lives on scratch, which is outside
+whatever protection your home directory has, on a machine with everyone else's accounts on it.
+
+So Slate creates it `0700` and runs every process that writes into it under a matching umask. Set
+**Mode** to `0750` if your site puts collaborators in a project group and you want them to read your
+runs, or blank to follow the site's default — which on most clusters is world-readable.
+
+This is about the filesystem. Who can *talk to* a worker is a separate question, answered by CURVE
+and an allow-list holding only your hub's key; see [Remotes](remotes.md).
 
 ### No scheduler
 

@@ -38,15 +38,19 @@ struct RemoteStore
     host::String
     root::String
     mirror::String
+    # The umask every write into this store runs under on the FAR side (e.g. "077"). A store is
+    # normally on scratch, where a home directory's permissions do not reach, so a site default of
+    # 002 would publish the mirror's metadata to everyone with an account. Empty = the site's own.
+    umask::String
 end
 
-function RemoteStore(host::AbstractString, root::AbstractString)
+function RemoteStore(host::AbstractString, root::AbstractString; umask::AbstractString = "")
     # Keyed by host AND path: one laptop may drive several clusters, and two of them may well use
     # the same conventional path (`/scratch/$USER/slate`) for entirely different stores.
     tag = string(hash((String(host), String(root))); base = 16)
     m = joinpath(SlateHome.cache_home(), "stores", tag)
     for d in META_DIRS; mkpath(joinpath(m, d)); end
-    return RemoteStore(String(host), String(root), m)
+    return RemoteStore(String(host), String(root), m, String(umask))
 end
 
 # ── One connection, reused ───────────────────────────────────────────────────────────────────
@@ -923,7 +927,9 @@ function push_meta!(s::RemoteStore; dirs = (META_DIRS..., "blobs"))
     end
     isempty(present) && return true
     wipe = String[shq_path(joinpath(s.root, d)) for d in present if sync_flags(d, :out)]
-    script = "mkdir -p " * shq_path(s.root) *
+    # `tar x` creates with the ambient umask, so it is set for this shell rather than fixed up after.
+    script = (isempty(s.umask) ? "" : "umask " * s.umask * "; ") *
+             "mkdir -p " * shq_path(s.root) *
              (isempty(wipe) ? "" : "; rm -rf " * join(wipe, " ")) *
              "; cd " * shq_path(s.root) * " && tar xf -"
     return first(run_io(String(s.host), script, data))
@@ -952,6 +958,12 @@ end
 function ensure_root!(s::RemoteStore)
     isempty(s.host) && return true
     dirs = join((shq(joinpath(s.root, d)) for d in (META_DIRS..., "blobs")), " ")
-    ok, _ = run_there(s.host, "mkdir -p " * dirs)
+    # `chmod` as well as `umask`, because the root may already exist from a run made before the
+    # store had a mode — and the mode is the whole point on a machine with other accounts on it.
+    mode = isempty(s.umask) ? "" :
+        string(0o777 & ~parse(UInt16, s.umask; base = 8); base = 8, pad = 3)
+    ok, _ = run_there(s.host,
+        (isempty(s.umask) ? "" : "umask " * s.umask * "; ") * "mkdir -p " * dirs *
+        (isempty(mode) ? "" : "; chmod " * mode * " " * shq(s.root) * " " * dirs))
     return ok
 end

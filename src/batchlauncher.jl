@@ -35,14 +35,20 @@ struct JobSpec
     logdir::String
     prologue::String             # shell run before julia: `module load`, depot exports, ...
     directives::String           # scheduler flags verbatim, one per line — see `directive_lines`
+    # The umask every process writing into this store runs under, e.g. "077". A store on scratch is
+    # outside the protection a home directory gives, and a site's default umask is routinely 002 —
+    # so without this a sweep's results, its logs, and the source of the body that produced them are
+    # world-readable on a machine shared with everyone else who has an account. Empty leaves the
+    # site's own default, for a store that is meant to be shared.
+    umask::String
 end
 
 JobSpec(name, chunks; root, project, payload, julia = "julia",
         resources = (; cpus = 1, mem = "1G", walltime = "00:30:00", partition = ""),
-        logdir = joinpath(root, "logs"), prologue = "", directives = "") =
+        logdir = joinpath(root, "logs"), prologue = "", directives = "", umask = "") =
     JobSpec(String(name), String.(collect(chunks)), String(root), String(project),
             String(payload), String(julia), resources, String(logdir), String(prologue),
-            String(directives))
+            String(directives), String(umask))
 
 """
     directive_lines(text; prefix = "#SBATCH", example = "--constraint=avx512") -> Vector{String}
@@ -271,7 +277,9 @@ function log_search end
 # depot would each try to precompile into it, which is how a shared filesystem gets taken down. A
 # task must load from a ready depot or fail fast.
 function task_command(spec::JobSpec, chunks; heap::AbstractString = "")
-    pre = isempty(spec.prologue) ? "" : spec.prologue * "\n"
+    # Before the prologue: whatever a site's `module load` writes belongs to this store too.
+    um = isempty(spec.umask) ? "" : "umask " * spec.umask * "\n"
+    pre = um * (isempty(spec.prologue) ? "" : spec.prologue * "\n")
     cs = chunks isa AbstractString ? String(chunks) : join(String.(collect(chunks)), " ")
     # A task process runs its chunks in SEQUENCE, so it is long-lived and every unit's garbage
     # passes through one heap. Julia sizes that heap against the machine, which on a workstation
@@ -378,6 +386,11 @@ end
 
 function _exec_start_here(spec::JobSpec, slices, heap)
     mkpath(_jobdir(spec.root)); mkpath(spec.logdir)
+    # Running here, the store is on this machine and `task_command` carries the umask into the task
+    # process; the directories it writes into are made now, so they get it explicitly.
+    isempty(spec.umask) || for d in (_jobdir(spec.root), spec.logdir)
+        try; chmod(d, 0o777 & ~parse(UInt16, spec.umask; base = 8)); catch; end
+    end
     pids = Int[]
     for (i, slice) in enumerate(slices)
         logf = joinpath(spec.logdir, "$(spec.name).$(i).log")
@@ -397,7 +410,10 @@ end
 # The pid file is written ON THE FAR SIDE, where the pids mean something — the same place `poll`
 # and `cancel!` read it from. A pid is only meaningful to the kernel that issued it.
 function _exec_start_there(l::ExecLauncher, spec::JobSpec, slices, heap)
-    lines = ["mkdir -p $(_shq(_jobdir(spec.root))) $(_shq(spec.logdir))", "pids=''"]
+    # The log files are created by THIS shell's redirection, not by the task process, so the umask
+    # has to be set here as well as inside `task_command`.
+    lines = [isempty(spec.umask) ? ":" : "umask " * spec.umask,
+             "mkdir -p $(_shq(_jobdir(spec.root))) $(_shq(spec.logdir))", "pids=''"]
     for (i, slice) in enumerate(slices)
         logf = joinpath(spec.logdir, "$(spec.name).$(i).log")
         push!(lines, "nohup sh -c $(_shq(task_command(spec, slice; heap = heap))) " *

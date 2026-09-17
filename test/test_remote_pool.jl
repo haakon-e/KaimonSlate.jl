@@ -79,6 +79,19 @@ mkworker(port; alive = true, state = "idle", region = "testreg", hub = gethostna
         # A block is refused if ANY port in it is taken, not only the gate port.
         p, _ = RE._next_ports(reserve = 2)
         @test RE._next_ports(floor = p + 2, reserve = 2, taken = Set([p + 3]))[1] > p + 3
+
+        # For a worker that binds on ANOTHER machine, this one's loopback is not the question.
+        # Holding a port here must not make the allocator skip it over there.
+        q, _ = RE._next_ports(reserve = 2)
+        squat = Sockets.listen(Sockets.localhost, q + 2)
+        try
+            RE._GATE_PORT[] = q + 2
+            @test RE._next_ports(reserve = 2, probe = false)[1] == q + 2   # remote: not our port
+            RE._GATE_PORT[] = q + 2
+            @test RE._next_ports(reserve = 2)[1] != q + 2                  # local: still ours
+        finally
+            close(squat)
+        end
     end
 
     @testset "_port_floor: above every live worker's 3-port block; dead ports are free" begin

@@ -330,6 +330,11 @@ struct ClusterTarget <: SweepTarget
     parent::String      # what the task environment is built from; `project` overrides it
     julia::String       # the julia to build that environment with, as the login node names it
     procs::Int          # `exec` only: processes at once on `host`; 0 = follow `local_procs()`
+    # How private this store is, as an octal directory mode: "0700" (default) or "0750" for a site
+    # where a project group is meant to read each other's runs. A store lives on scratch — outside
+    # whatever a home directory protects — and holds results, job output, and the SOURCE of the body
+    # that produced them. Empty follows the site's own umask, which is routinely world-readable.
+    mode::String
 end
 #
 # A target DESCRIBES a cluster; it does not reach one. `parent` and an empty `project`/`payload` mean
@@ -343,11 +348,11 @@ function ClusterTarget(host = ""; kind = :slurm, root = "", root_remote = root, 
                        parent = "", project = nothing,
                        resources = (; cpus = 1, mem = "2G", walltime = "01:00:00", partition = ""),
                        chunk = 16, account = "", qos = "", prologue = "", directives = "",
-                       julia = "julia", procs = 0)
+                       julia = "julia", procs = 0, mode = "0700")
     ClusterTarget(Symbol(kind), String(host), String(root), String(root_remote),
                   project === nothing ? "" : String(project), String(payload),
                   resources, Int(chunk), String(account), String(qos), String(prologue),
-                  String(directives), String(parent), String(julia), Int(procs))
+                  String(directives), String(parent), String(julia), Int(procs), String(mode))
 end
 
 "A `ClusterTarget` on SLURM. The spelling notebooks and the docs use."
@@ -374,7 +379,8 @@ function provision!(t::ClusterTarget)
     # shipped rather than configured. Naming one is still allowed, for a site that stages it itself.
     pay = isempty(t.payload) ? provision_payload!(t.host, t.root_remote) : t.payload
     return ClusterTarget(t.kind, t.host, t.root, t.root_remote, proj, pay, t.resources, t.chunk,
-                         t.account, t.qos, t.prologue, t.directives, t.parent, t.julia, t.procs)
+                         t.account, t.qos, t.prologue, t.directives, t.parent, t.julia, t.procs,
+                         t.mode)
 end
 
 # Resources belong to the TARGET (a site's account, its partitions) but walltime, memory and cores
@@ -385,7 +391,7 @@ with_resources(t::ClusterTarget, res) =
     res === nothing ? t :
     ClusterTarget(t.kind, t.host, t.root, t.root_remote, t.project, t.payload,
                   merge(t.resources, res), t.chunk, t.account, t.qos, t.prologue, t.directives,
-                  t.parent, t.julia, t.procs)
+                  t.parent, t.julia, t.procs, t.mode)
 
 # The scheduler settings a `#%% sweep` cell may carry on its header (engine.jl `cell_attrs`), e.g.
 #
@@ -495,7 +501,8 @@ function cluster(spec::AbstractDict)
     (a.kind == "exec" && isempty(a.host)) &&
         return LocalTarget(; a.root, a.parent, a.chunk, a.procs)
     return ClusterTarget(a.host; kind = Symbol(a.kind), a.root, a.root_remote, a.parent, a.payload,
-                         a.chunk, a.account, a.qos, a.prologue, a.directives, a.resources, a.procs)
+                         a.chunk, a.account, a.qos, a.prologue, a.directives, a.resources, a.procs,
+                         a.mode)
 end
 
 """
@@ -519,6 +526,13 @@ function cluster_args(spec::AbstractDict)
     host = get_("host")
     # `exec` only: how many task processes at once, wherever it runs. 0 = follow the setting.
     procs = something(tryparse(Int, get_("procs", "0")), 0)
+    # How private the store is on a machine you share. Private by default: a store holds results,
+    # job output and the body's own source, and it lives on scratch where a home directory's
+    # permissions do not reach. "" follows the site's umask, for a store meant to be shared.
+    mode = get_("mode", "0700")
+    isempty(mode) || occursin(r"^0?[0-7]{3}$", mode) ||
+        error("cluster `$name` has mode `$mode`; use an octal directory mode such as \"0700\" " *
+              "(private) or \"0750\" (your group may read), or \"\" to follow the site's umask")
     root_remote = get_("root_remote")
     # A cluster reached over ssh has ONE store, and it is the cluster's — `root` is for a local run,
     # or for the unusual case of a store this notebook has mounted. Requiring both was a hangover
@@ -541,7 +555,7 @@ function cluster_args(spec::AbstractDict)
     # only for a site that stages it itself.
     payload = get_("payload")
     res = cluster_resources(spec)
-    return (; kind, name, root, parent, chunk, payload, procs,
+    return (; kind, name, root, parent, chunk, payload, procs, mode,
               root_remote = isempty(root_remote) ? root : root_remote,
               host, account = get_("account"), qos = get_("qos"),
               prologue = get_("prologue"), directives = get_("directives"),
@@ -665,7 +679,7 @@ with_chunk(t::LocalTarget, n) = n === nothing ? t :
 with_chunk(t::ClusterTarget, n) = n === nothing ? t :
     ClusterTarget(t.kind, t.host, t.root, t.root_remote, t.project, t.payload,
                   t.resources, n, t.account, t.qos, t.prologue, t.directives, t.parent, t.julia,
-                  t.procs)
+                  t.procs, t.mode)
 
 "The host a target authenticates to; empty for one that runs here."
 target_host(::LocalTarget) = ""
@@ -702,6 +716,13 @@ function launcher_for(t::ClusterTarget)
     return ctor(t.host; account = t.account, qos = t.qos, runner = (h, sc) -> run_there(h, sc))
 end
 
+# The umask that produces a directory mode. `0700` → `077`: what the mode does NOT grant. Empty
+# mode means the site's own default, so no `umask` line is emitted at all.
+store_umask(mode::AbstractString) = isempty(mode) ? "" :
+    string(0o777 & ~parse(UInt16, mode; base = 8); base = 8, pad = 3)
+store_umask(t::ClusterTarget) = store_umask(t.mode)
+store_umask(::LocalTarget) = ""      # a local store sits under the user's own directories
+
 specfn_for(t::LocalTarget) = (name, cs) -> BatchLauncher.JobSpec(name, cs;
     root = t.root, project = t.project, payload = t.payload)
 # `reconcile!` calls this only when it has a job to submit, so provisioning here is what keeps it off
@@ -712,7 +733,8 @@ function specfn_for(t::ClusterTarget)
         p = ready[] === nothing ? (ready[] = provision!(t)) : ready[]
         BatchLauncher.JobSpec(name, cs; root = p.root_remote, project = p.project,
                               payload = p.payload, resources = p.resources,
-                              prologue = p.prologue, directives = p.directives)
+                              prologue = p.prologue, directives = p.directives,
+                              umask = store_umask(p))
     end
 end
 
@@ -1279,7 +1301,7 @@ const _STORES_LOCK = ReentrantLock()
 function remote_store(t::ClusterTarget)
     lock(_STORES_LOCK) do
         get!(_STORES, (t.host, t.root_remote)) do
-            s = RemoteStore(t.host, t.root_remote)
+            s = RemoteStore(t.host, t.root_remote; umask = store_umask(t))
             ensure_root!(s)
             s
         end
