@@ -49,7 +49,7 @@ using .NotebookServer: serve_notebook, start_server, LiveNotebook,
                       request_live_eval, export_standalone, export_pdf, expand,
     export_app, app_defaults
 
-export serve_notebook, LiveNotebook, expand, standalone!, register_extension
+export serve_notebook, LiveNotebook, expand, standalone!, register_extension, register_answerer!
 export export_app, app_defaults
 
 # ── Auto-registration as a Kaimon extension ───────────────────────────────────
@@ -281,7 +281,10 @@ _base() = "http://127.0.0.1:$(_PORT[])"
 # The running hub (started lazily on first open).
 function _hub()
     lock(_LOCK) do
-        _HUB[] === nothing && (_HUB[] = start_hub(; port = _PORT[]))
+        if _HUB[] === nothing
+            _load_user_init!()   # the user's hub init file (answerers and other hooks) before it serves
+            _HUB[] = start_hub(; port = _PORT[])
+        end
         # (Re)register the remote bring-up → browser-banner sink HERE too, not only in `start_hub`: this
         # runs on every hub access, so a Revise reload of the server picks it up WITHOUT a full restart
         # (start_hub only runs once, at boot). The closure reads `_HUB[]` at call time → always the live hub.
@@ -290,6 +293,33 @@ function _hub()
         return _HUB[]::Hub
     end
 end
+
+# The hub's own `startup.jl`: an optional user file, evaluated in this module at hub startup, so a
+# user can register answerers (or other hooks) with their own logic without editing the source. The
+# path is `KAIMONSLATE_INIT`, else `init.jl` under the config home. A file that errors is logged and
+# the hub still serves.
+_user_init_path() = get(ENV, "KAIMONSLATE_INIT", joinpath(SlateHome.config_home(), "init.jl"))
+function _load_user_init!()
+    path = _user_init_path()
+    isfile(path) || return nothing
+    @info "KaimonSlate: loading hub init file" path
+    try
+        Base.include(@__MODULE__, path)
+    catch e
+        @warn "KaimonSlate: the hub init file errored; the hub keeps serving" path exception = (e, catch_backtrace())
+    end
+    return nothing
+end
+
+"""
+    register_answerer!(f) -> nothing
+
+Register `f(host, prompt, echo) -> String | nothing` to answer ssh sign-in prompts before the browser
+padlock. Return a `String` to answer, or `nothing` to defer to the next answerer, and finally to the
+dialog. Call this from a hub init file (`init.jl` under KaimonSlate's config home) to answer a host's
+password from a credential store. See `SshAuth.register_answerer!`.
+"""
+register_answerer!(f) = SshAuth.register_answerer!(f)
 
 # Cross-platform: PIDs of processes whose command line contains `needle`. Unix uses
 # `pgrep -f` (which excludes its own PID); Windows queries Win32_Process via PowerShell,

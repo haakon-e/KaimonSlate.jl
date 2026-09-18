@@ -34,6 +34,7 @@ KaimonSlate.standalone!
 KaimonSlate.export_app
 KaimonSlate.app_defaults
 KaimonSlate.register_extension
+KaimonSlate.register_answerer!
 ```
 
 ## Configuration accessors

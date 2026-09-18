@@ -18,6 +18,17 @@ const RE = KaimonSlate.ReportEngine
 const ST = RE.SlateTask
 const MS = RE.MemoStore
 
+# A hub init file defines its answerer at runtime (`Base.include`), in a world newer than the sign-in
+# frame that consumes it. This reproduces that within one frame: it builds the answerer with
+# `include_string` and then reaches it through `ask`, so a direct (non-`invokelatest`) dispatch would
+# raise a world-age `MethodError` and fall through to the dialog.
+function _ask_with_runtime_answerer()
+    KaimonSlate.SshAuth.register_answerer!(
+        Base.include_string(@__MODULE__,
+            "(h, p, e) -> (h == \"host-a\" && !e) ? \"world-age-ok\" : nothing"))
+    return KaimonSlate.SshAuth.ask("host-a", "Password:", false; timeout = 1.0)
+end
+
 @testset "dataset" begin
 
     @testset "an array is addressable with no index beyond its dims" begin
@@ -561,6 +572,47 @@ const MS = RE.MemoStore
                 S.SshAuth.set_reporter!(nothing)
             end
         end
+
+        # A REGISTERED answerer is one link in a chain before the padlock, not the whole path. It
+        # answers a host it knows and returns `nothing` to defer, so a per-host credential lookup can
+        # coexist with the browser prompt: a broken link is skipped rather than fatal, and an
+        # unhandled host still reaches the dialog.
+        @test S.SshAuth.has_answerer() == false
+        try
+            S.SshAuth.register_answerer!((h, p, e) -> (h == "host-a" && !e) ? "from-store" : nothing)
+            @test S.SshAuth.has_answerer()
+            @test S.SshAuth.ask("host-a", "Password:", false; timeout = 1.0) == "from-store"
+            S.SshAuth.register_answerer!((h, p, e) -> error("a broken link"))
+            S.SshAuth.register_answerer!((h, p, e) -> h == "host-b" ? "host-b-pw" : nothing)
+            @test S.SshAuth.ask("host-b", "pw", false; timeout = 1.0) == "host-b-pw"   # the throw is skipped
+            @test S.SshAuth.ask("host-a", "Password:", false; timeout = 1.0) == "from-store"
+            # An unhandled host falls through to the dialog: raise it on a task and answer it by id.
+            t = @async S.SshAuth.ask("elsewhere", "Password:", false)
+            local mine = NamedTuple[]
+            for _ in 1:200
+                mine = filter(x -> x.host == "elsewhere", S.SshAuth.pending())
+                isempty(mine) || break
+                sleep(0.01)
+            end
+            @test length(mine) == 1
+            @test S.SshAuth.answer!(mine[1].id, "typed")
+            @test fetch(t) == "typed"
+        finally
+            empty!(S.SshAuth._ANSWERERS)
+            S.SshAuth.set_answerer!(nothing)
+        end
+        @test S.SshAuth.has_answerer() == false
+
+        # An answerer a hub init file registers is defined at runtime, in a world the sign-in frame
+        # cannot see without `invokelatest`; without it the dispatch raises a world-age error and the
+        # prompt reaches the padlock instead of the credential store.
+        try
+            @test _ask_with_runtime_answerer() == "world-age-ok"
+        finally
+            empty!(S.SshAuth._ANSWERERS)
+            S.SshAuth.set_answerer!(nothing)
+        end
+        @test S.SshAuth.has_answerer() == false
 
         # An empty host means "here", which makes the archive half of a transfer testable without a
         # cluster. `excludes` is the part worth pinning: shelling out to `tar` made this
