@@ -999,10 +999,10 @@ function __slate_eval_batch(cells; run_id::String = "", npool::Int = 0)
                              _cell_get(c, "opaque", false) === true))
         meta[id] = c
     end
-    # Max concurrent evaluator TASKS — deliberately NOT tied to Threads.nthreads(): tasks interleave on
-    # one OS thread at yield points (sleep / IO / async), so independent I/O-bound cells overlap even on
-    # the safe single-compute-thread worker. (CPU-bound cells need real OS threads, which await the
-    # world-age binding fix — see GATE/threads notes.) Bound it so a huge notebook doesn't spawn 100s.
+    # Max concurrent evaluator TASKS, not tied to Threads.nthreads(): a task yielding on IO lets an
+    # independent cell overlap whatever the thread count is, and the worker now starts with
+    # min(cores, 8) compute threads (default_worker_threads, gate_kernel.jl), so CPU-bound cells
+    # overlap too. Bound it so a huge notebook doesn't spawn 100s.
     pool = npool > 0 ? npool : max(8, Threads.nthreads())
     _BATCH_CANCEL[] = false            # fresh batch — clear any prior cancel
     @info "slate batch: scheduling" run = run_id cells = length(specs) pool = pool
