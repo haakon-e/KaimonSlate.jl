@@ -2623,12 +2623,15 @@ end
 _emit_pending(nb::LiveNotebook, pending::Integer; fresh::Bool = false) =
     ReportEngine._emit_run_batch(nb.report.id, pending, fresh)
 
-# ── Parallel (inter-cell) batch execution — opt-in via meta["parallel"] ──────────────────────────
-# When enabled and a gate worker backs the notebook, the runner hands ALL stale code cells to the
-# worker AT ONCE; the worker schedules them (par_blockers) so independent cells run concurrently in
-# its one warm namespace while any conflicting pair serialises, and streams each result back as it
-# lands (slate_celldone → server_celldone). This is the genuine novelty: notebooks have never run
-# cells in parallel. Off by default — the proven serial path is untouched unless the flag is set.
+# ── Parallel (inter-cell) batch execution, controlled by meta["parallel"] ────────────────────────
+# When enabled and a gate worker backs the notebook, the runner schedules ALL stale code cells HERE
+# (par_blockers, see parsched.jl) and launches the independent ones CONCURRENTLY: each is its own
+# `__slate_eval` gate request against the worker's one warm namespace, muxed by correlation id,
+# while any conflicting pair serialises. Each cell streams its result back as it lands
+# (slate_celldone → server_celldone). This is the genuine novelty: notebooks have never run cells in
+# parallel. ON by default; meta["parallel"] = false, or the Settings toggle, returns a notebook to
+# the serial path, which also carries the 0/1-cell case, markdown, and a notebook with an
+# active region.
 # Default for notebooks that haven't explicitly set meta["parallel"]. That per-notebook flag is
 # IN-MEMORY and resets whenever the notebook is re-opened/rebuilt from its .jl (every extension restart
 # / kernel respawn) — which is why a Settings toggle kept getting wiped. KaimonSlate loads this default
